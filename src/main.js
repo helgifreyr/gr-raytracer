@@ -73,8 +73,9 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
 
   const UBO_FLOATS = 40; // 10 * vec4
   const ubuf = device.createBuffer({ size: UBO_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const blurHBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const blurVBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  // 3-level bloom: 6 separable-blur passes (H+V per octave) → 6 small uniform buffers.
+  const blurBufs = Array.from({ length: 6 }, () =>
+    device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
   const compBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
   const sampler = device.createSampler({   // sky sampler: longitude wraps, clamp at poles
@@ -102,28 +103,46 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
   }
   rebuildSceneBind();
 
-  // Offscreen targets (recreated on resize): full-res HDR scene + two half-res blur buffers.
-  let texHDR, texBlurA, texBlurB, blurHBind, blurVBind, compBind;
+  // Offscreen targets (recreated on resize): full-res HDR scene + a 3-octave bloom
+  // pyramid (½, ¼, ⅛ res). Each octave has an A texture (after the horizontal pass)
+  // and a B texture (after the vertical pass); blurTex = [A0,B0, A1,B1, A2,B2].
+  let texHDR, blurTex, blurBinds, compBind;
   function rebuildTargets(w, h) {
-    const hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
-    [texHDR, texBlurA, texBlurB].forEach((t) => t && t.destroy());
+    const dims = [
+      [Math.max(1, w >> 1), Math.max(1, h >> 1)],
+      [Math.max(1, w >> 2), Math.max(1, h >> 2)],
+      [Math.max(1, w >> 3), Math.max(1, h >> 3)],
+    ];
+    [texHDR, ...(blurTex || [])].forEach((t) => t && t.destroy());
     texHDR = device.createTexture({ size: [w, h], format: HDR, usage: TEX_USAGE });
-    texBlurA = device.createTexture({ size: [hw, hh], format: HDR, usage: TEX_USAGE });
-    texBlurB = device.createTexture({ size: [hw, hh], format: HDR, usage: TEX_USAGE });
-    blurHBind = device.createBindGroup({ layout: blurPipeline.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: postSampler }, { binding: 1, resource: texHDR.createView() }, { binding: 2, resource: { buffer: blurHBuf } }] });
-    blurVBind = device.createBindGroup({ layout: blurPipeline.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: postSampler }, { binding: 1, resource: texBlurA.createView() }, { binding: 2, resource: { buffer: blurVBuf } }] });
+    blurTex = [];
+    dims.forEach(([lw, lh]) => {
+      blurTex.push(device.createTexture({ size: [lw, lh], format: HDR, usage: TEX_USAGE })); // A
+      blurTex.push(device.createTexture({ size: [lw, lh], format: HDR, usage: TEX_USAGE })); // B
+    });
+    const A = (i) => blurTex[i * 2], B = (i) => blurTex[i * 2 + 1];
+    // Pass chain (src → dst): bright-pass+H at L0, then V; each coarser octave blurs the
+    // previous octave's blurred output, downsampling via the smaller target + linear filter.
+    const src = [texHDR, A(0), B(0), A(1), B(1), A(2)];   // dst is blurTex[i] = [A0,B0,A1,B1,A2,B2]
+    blurBinds = src.map((s, i) => device.createBindGroup({
+      layout: blurPipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: postSampler }, { binding: 1, resource: s.createView() }, { binding: 2, resource: { buffer: blurBufs[i] } }],
+    }));
     compBind = device.createBindGroup({ layout: compositePipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: postSampler }, { binding: 1, resource: texHDR.createView() },
-      { binding: 2, resource: texBlurB.createView() }, { binding: 3, resource: { buffer: compBuf } }] });
-    // blur offsets in uv (bright-pass threshold on horizontal; vertical just blurs).
-    // threshold 0.7 so moderately bright disk/stars bloom, not only the brightest spots.
-    // Both passes step in HALF-RES texels (hw, hh) so the blur is isotropic in screen space —
-    // the H pass samples full-res texHDR but writes the half-res target, so use hw not w.
+      { binding: 2, resource: B(0).createView() }, { binding: 3, resource: B(1).createView() },
+      { binding: 4, resource: B(2).createView() }, { binding: 5, resource: { buffer: compBuf } }] });
+    // Blur offsets in uv, stepped in TARGET-res texels so each octave's blur is isotropic.
+    // Only the very first (L0 horizontal) pass applies the bright-pass threshold (0.7);
+    // every later pass just blurs (threshold -1) the already-extracted highlights.
     const spread = 2.5;
-    device.queue.writeBuffer(blurHBuf, 0, new Float32Array([spread / hw, 0, 0.7, 0]));
-    device.queue.writeBuffer(blurVBuf, 0, new Float32Array([0, spread / hh, -1.0, 0]));
+    for (let i = 0; i < 6; i++) {
+      const [tw, th] = dims[i >> 1];
+      const horizontal = (i % 2) === 0;
+      const thr = i === 0 ? 0.7 : -1.0;
+      device.queue.writeBuffer(blurBufs[i], 0,
+        new Float32Array([horizontal ? spread / tw : 0, horizontal ? 0 : spread / th, thr, 0]));
+    }
   }
   const u = new Float32Array(UBO_FLOATS);
 
@@ -350,10 +369,9 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
       const p = enc.beginRenderPass(target(descView));
       p.setPipeline(pipe); p.setBindGroup(0, bg); p.draw(3); p.end();
     };
-    draw(texHDR.createView(), scenePipeline, sceneBind);      // 1. ray-trace → HDR
-    draw(texBlurA.createView(), blurPipeline, blurHBind);     // 2. bright-pass + horizontal blur
-    draw(texBlurB.createView(), blurPipeline, blurVBind);     // 3. vertical blur
-    draw(ctx.getCurrentTexture().createView(), compositePipeline, compBind); // 4. composite + tonemap
+    draw(texHDR.createView(), scenePipeline, sceneBind);                      // ray-trace → HDR
+    for (let i = 0; i < 6; i++) draw(blurTex[i].createView(), blurPipeline, blurBinds[i]); // 3-octave bloom pyramid
+    draw(ctx.getCurrentTexture().createView(), compositePipeline, compBind);  // composite + ACES tonemap
     device.queue.submit([enc.finish()]);
 
     dirty = false;

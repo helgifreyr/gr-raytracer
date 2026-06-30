@@ -29,12 +29,14 @@ fn fsBlur(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   return vec4<f32>(col, 1.0);
 }
 
-// --- composite: scene HDR + bloom, then tonemap + gamma to the swapchain ---
+// --- composite: scene HDR + 3-level bloom, then tonemap + gamma to the swapchain ---
 struct Comp { bloom : f32, pad0 : f32, pad1 : f32, pad2 : f32 };
 @group(0) @binding(0) var csamp : sampler;
 @group(0) @binding(1) var hdrTex : texture_2d<f32>;
-@group(0) @binding(2) var bloomTex : texture_2d<f32>;
-@group(0) @binding(3) var<uniform> cp : Comp;
+@group(0) @binding(2) var bloom0 : texture_2d<f32>;   // ½-res  (tight glow)
+@group(0) @binding(3) var bloom1 : texture_2d<f32>;   // ¼-res  (medium halo)
+@group(0) @binding(4) var bloom2 : texture_2d<f32>;   // ⅛-res  (wide veil)
+@group(0) @binding(5) var<uniform> cp : Comp;
 
 // Hue-preserving ACES filmic tonemap (adapted from the cuneus black-hole shader,
 // Enes Altun, MIT — github.com/altunenes/cuneus). The ACES curve is applied to the
@@ -53,7 +55,12 @@ fn tonemapHue(c : vec3<f32>) -> vec3<f32> {
 @fragment
 fn fsComposite(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   var col = textureSampleLevel(hdrTex, csamp, uv, 0.0).rgb;
-  col = col + textureSampleLevel(bloomTex, csamp, uv, 0.0).rgb * cp.bloom;
+  // Sum the three bloom octaves (each progressively coarser/wider) for a soft,
+  // band-free glow. Linear filtering upsamples the coarser levels for free.
+  let glow = textureSampleLevel(bloom0, csamp, uv, 0.0).rgb * 0.55
+           + textureSampleLevel(bloom1, csamp, uv, 0.0).rgb * 0.32
+           + textureSampleLevel(bloom2, csamp, uv, 0.0).rgb * 0.20;
+  col = col + glow * cp.bloom;
   col = tonemapHue(col);                                    // hue-preserving ACES
   col = pow(col, vec3<f32>(1.0 / 2.2));                     // gamma
   return vec4<f32>(col, 1.0);

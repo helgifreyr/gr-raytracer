@@ -45,13 +45,18 @@ and softly self-occluding rather than being an infinitely thin plane. Each segme
 radiative-transfer equation $\frac{dI}{ds} = \kappa\,(S - I)$ — emission toward a source function
 $S$, attenuation by opacity $\kappa$ — so an optically thick disk emerges at its source colour. The relativistic Doppler
 factor and the gravitational lapse are combined into one redshift factor that drives the beaming
-(∝ δ³) and a temperature-ramp colour shift.</p>
+(∝ δ³) and the observed temperature. The source colour itself is a Shakura–Sunyaev profile
+$T \propto r^{-3/4}$ through a blackbody map, and the gas is given filamentary structure by
+multifractal value-noise sampled in log-spiral coordinates (technique adapted from
+<a href="https://github.com/altunenes/cuneus">cuneus</a>, MIT).</p>
 
 <h2>HDR and bloom</h2>
 <p>The scene renders to a floating-point HDR buffer; a second shader
-(<code>src/shaders/post.wgsl</code>) extracts the bright parts, blurs them with a separable
-Gaussian at half resolution, and composites them back before a Reinhard tonemap and gamma. That's
-why the beamed side of the disk glows.</p>
+(<code>src/shaders/post.wgsl</code>) extracts the bright parts and blurs them into a three-octave
+pyramid (½, ¼, ⅛ resolution) with separable Gaussians, then composites the octaves back for a soft,
+band-free glow. The final step is a hue-preserving ACES filmic tonemap (the ACES curve applied to the
+luminance peak, chroma ratio preserved) and gamma — so the beamed side blooms without the colour
+clipping plain per-channel Reinhard would cause.</p>
 
 <h2>The f32 ceiling</h2>
 <p>WebGPU shaders are single-precision only (no f64). The physics is correct, but near the horizon

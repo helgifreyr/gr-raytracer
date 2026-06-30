@@ -319,21 +319,38 @@ fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
   let turb = smoothstep(0.30, 1.05, cloud * (0.55 + 0.8 * fine));
   return vfall * radial * mix(0.25, 1.0, turb);       // base 0.25 keeps the disk continuous
 }
+// Blackbody colour from temperature (Kelvin), Planckian-locus rational approximation
+// (Blender-derived fit). Returns linear RGB normalised to ~unit peak. The blue channel
+// uses the same coefficients on both sides of the 6500 K knee.
+fn blackbody(tempK : f32) -> vec3<f32> {
+  let T = clamp(tempK, 1000.0, 40000.0);
+  var c : vec3<f32>;
+  if (T <= 6500.0) {
+    c = vec3<f32>(
+      1.0,
+      -2902.1955 / (T + 1669.5804) + 1.3302674,
+      -8257.7997 / (T + 2575.2828) + 1.8993754);
+  } else {
+    c = vec3<f32>(
+      1745.0425 / (T - 2666.3474) + 0.5599539,
+      1216.6168 / (T - 2173.1012) + 0.7038120,
+      -8257.7997 / (T + 2575.2828) + 1.8993754);
+  }
+  return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+}
 fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
   let rIn = u.p0.x;  let rOut = u.p0.y;
   let t = clamp((r - rIn) / (rOut - rIn), 0.0, 1.0);   // 0 inner .. 1 outer
-  // Colour comes from a temperature ramp; the redshift factor shifts the *temperature*
-  // (blueshift → hotter/inner colours, redshift → cooler) — staying on the ramp avoids
-  // spurious hues. inner = blue-white, mid = amber, outer = deep red.
-  let ts = clamp(t - (dop - 1.0) * 0.6, 0.0, 1.0);
-  let cInner = vec3<f32>(0.9, 0.95, 1.0);
-  let cMid   = vec3<f32>(1.0, 0.78, 0.4);
-  let cOuter = vec3<f32>(0.9, 0.24, 0.05);
-  var col = mix(cInner, cMid, smoothstep(0.0, 0.4, ts));
-  col = mix(col, cOuter, smoothstep(0.4, 1.0, ts));
+  // Physical colour: a Shakura–Sunyaev thin-disk temperature profile T ∝ r^(−3/4)
+  // anchored at the inner edge, rendered through a blackbody (Planckian) colour map.
+  // g = dop (Doppler × gravitational redshift) multiplies the *observed* temperature,
+  // so the approaching side blueshifts hotter/bluer and the receding side redshifts
+  // cooler/redder — the colour asymmetry is physical, not a hand-tuned ramp.
+  let Temit = 11000.0 * pow(rIn / max(r, rIn), 0.75);
+  let col0 = blackbody(Temit * dop);
   // Inner-edge incandescence: a hot ring glow peaking at the ISCO, additive.
   let ring = exp(-pow(t * 7.0, 2.0));
-  col = col + vec3<f32>(1.0, 0.6, 0.32) * ring * 0.7;
+  var col = col0 + vec3<f32>(1.0, 0.6, 0.32) * ring * 0.7;
   let bright = 1.4 - 0.5 * t;                          // radial fade handled in diskDensity
   let beam = pow(dop, 3.0);                            // relativistic beaming (δ³)
   return col * bright * beam * u.p3.y * u.p2.y;        // * diskBrightness * exposure
