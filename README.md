@@ -72,7 +72,11 @@ for continuous motion (capped at 30 fps). See [Performance](#performance).
 
 The whole thing is the same idea used to avoid hand-deriving Christoffel symbols:
 **use the Hamiltonian form of the geodesic equation, and get the metric derivatives
-by automatic differentiation.**
+by automatic differentiation.** That approach — autodiff for geodesic integration in
+*arbitrary* metrics, no hand-coded Christoffel symbols — is from **FANTASY**
+([Christian & Chan 2020](https://arxiv.org/abs/2010.02237),
+[code](https://github.com/pierrechristian/FANTASY)); this project is a real-time WebGPU
+take on it (with RK4 rather than their symplectic integrator).
 
 ```
                                                   ┌─────────────────────────────┐
@@ -260,3 +264,19 @@ test/wgsl_check.mjs WGSL parse smoke-test
 test/wgsl_exec.mjs  runs the real shader on CPU, compares to engine.mjs
 package.json        `npm test`, `npm run serve`
 ```
+
+## Credits & references
+
+- **FANTASY** — Christian & Chan, *FANTASY: User-Friendly Symplectic Geodesic Integrator for
+  Arbitrary Metrics with Automatic Differentiation* (2020).
+  [arXiv:2010.02237](https://arxiv.org/abs/2010.02237) ·
+  [github.com/pierrechristian/FANTASY](https://github.com/pierrechristian/FANTASY).
+  The autodiff-geodesic approach this renderer is built on.
+- **Interstellar wormhole** — James, von Tunzelmann, Franklin & Thorne, *Visualizing
+  Interstellar's Wormhole* (2015). [arXiv:1502.03809](https://arxiv.org/abs/1502.03809).
+  The Ellis/Dneg wormhole metric and its dual-universe lensing.
+- **Lensing test pattern** — James et al., *Gravitational lensing by spinning black holes…*
+  (2015). [arXiv:1605.08293](https://arxiv.org/abs/1605.08293). Inspiration for the
+  gridded/coloured celestial-sphere background.
+- Sky panoramas in `images/` — Solar System Scope (CC BY 4.0) and NASA SVS Deep Star Maps
+  (public domain); see `images/CREDITS.txt`.
