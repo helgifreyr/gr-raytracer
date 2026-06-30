@@ -275,8 +275,8 @@ package.json        `npm test`, `npm run serve`
 - **Interstellar wormhole** — James, von Tunzelmann, Franklin & Thorne, *Visualizing
   Interstellar's Wormhole* (2015). [arXiv:1502.03809](https://arxiv.org/abs/1502.03809).
   The Ellis/Dneg wormhole metric and its dual-universe lensing.
-- **Lensing test pattern** — James et al., *Gravitational lensing by spinning black holes…*
-  (2015). [arXiv:1605.08293](https://arxiv.org/abs/1605.08293). Inspiration for the
-  gridded/coloured celestial-sphere background.
+- **Lensing test pattern** — Cunha, Herdeiro, Radu & Runarsson, *Shadows of Kerr black holes
+  with scalar hair* (2015). [arXiv:1509.00021](https://arxiv.org/abs/1509.00021). Inspiration
+  for the gridded/coloured celestial-sphere background (multiple lensed images of the sphere).
 - Sky panoramas in `images/` — Solar System Scope (CC BY 4.0) and NASA SVS Deep Star Maps
   (public domain); see `images/CREDITS.txt`.

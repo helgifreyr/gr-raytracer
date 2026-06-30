@@ -313,7 +313,7 @@ fn gridLine(c : f32, spacing : f32, width : f32) -> f32 {
   let d = abs(fract(c / spacing + 0.5) - 0.5) * spacing;   // angular distance to nearest line
   return smoothstep(width, width * 0.4, d);
 }
-// Celestial-sphere test pattern (cf. the Interstellar paper, arXiv:1605.08293):
+// Celestial-sphere test pattern (cf. Cunha, Herdeiro, Radu & Runarsson 2015, arXiv:1509.00021):
 // four coloured azimuth quadrants, dimmer southern hemisphere, lat/long grid.
 // Lensing is read directly off how the quadrant edges and grid lines warp.
 fn celestial(dir : vec3<f32>) -> vec3<f32> {
