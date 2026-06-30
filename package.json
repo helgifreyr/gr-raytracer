@@ -1,0 +1,14 @@
+{
+  "name": "metric-agnostic-raytracer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GPU geodesic ray tracer for arbitrary spacetimes (WebGPU/WGSL), with a CPU-validated physics engine.",
+  "type": "module",
+  "scripts": {
+    "test": "node test/test.mjs && node test/wgsl_check.mjs && node test/wgsl_exec.mjs",
+    "serve": "python -m http.server 8000"
+  },
+  "devDependencies": {
+    "wgsl_reflect": "^1.4.0"
+  }
+}

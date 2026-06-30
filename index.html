@@ -1,0 +1,873 @@
+<meta charset="utf-8" />
+<title>Metric-Agnostic Geodesic Ray Tracer (WebGPU)</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font: 13px/1.5 system-ui, sans-serif; color: #cdd; }
+  #gpu { display: block; width: 100vw; height: 100vh; }
+  #panel { position: fixed; top: 12px; left: 12px; width: 250px; padding: 14px 16px;
+    background: rgba(12,14,20,.82); border: 1px solid #2a3140; border-radius: 10px;
+    backdrop-filter: blur(8px); user-select: none; }
+  #panel h1 { font-size: 13px; margin: 0 0 2px; letter-spacing: .3px; }
+  #panel .sub { color: #7a8699; font-size: 11px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0; }
+  .row label { color: #9fb0c3; }
+  .row .val { color: #6cf; font-variant-numeric: tabular-nums; min-width: 42px; text-align: right; }
+  input[type=range] { width: 120px; accent-color: #4af; }
+  select { background: #1a1f2b; color: #cde; border: 1px solid #2a3140; border-radius: 6px; padding: 2px 4px; }
+  input[type=file] { width: 150px; font-size: 10px; color: #9fb0c3; }
+  input[type=file]::file-selector-button { background: #1a1f2b; color: #cde; border: 1px solid #2a3140;
+    border-radius: 6px; padding: 2px 6px; margin-right: 6px; cursor: pointer; font-size: 10px; }
+  #err { position: fixed; inset: 0; display: none; place-items: center; text-align: center;
+    padding: 40px; background: #000; }
+  #err div { max-width: 520px; }
+  #err code { color: #6cf; }
+  #hint { position: fixed; bottom: 10px; left: 12px; color: #56607a; font-size: 11px; }
+  #fps { position: fixed; top: 12px; right: 14px; color: #56607a; font-size: 11px;
+    font-variant-numeric: tabular-nums; }
+</style>
+
+<canvas id="gpu"></canvas>
+<div id="fps"></div>
+<div id="hint">drag to orbit · scroll to zoom · renders on demand (GPU idles when still)</div>
+
+<div id="panel">
+  <h1>Geodesic Ray Tracer</h1>
+  <div class="sub">general-relativistic light bending · WebGPU</div>
+  <div class="row"><label>Spacetime</label>
+    <select id="metric">
+      <option value="1" selected>Schwarzschild</option>
+      <option value="2">Kerr (spinning)</option>
+      <option value="3">Wormhole (Thorne)</option>
+      <option value="0">Flat (Minkowski)</option>
+    </select></div>
+  <div class="row" data-m="1,2"><label>Mass M</label><input id="mass" type="range" min="0.2" max="3" step="0.05" value="1"><span class="val" id="massv"></span></div>
+  <div class="row" data-m="2"><label>Spin a/M</label><input id="spin" type="range" min="0" max="0.99" step="0.01" value="0.7"><span class="val" id="spinv"></span></div>
+  <div class="row" data-m="3"><label>Throat radius ρ</label><input id="wr" type="range" min="0.5" max="8" step="0.1" value="2"><span class="val" id="wrv"></span></div>
+  <div class="row" data-m="3"><label>Throat length 2a</label><input id="wa" type="range" min="0" max="10" step="0.2" value="1"><span class="val" id="wav"></span></div>
+  <div class="row" data-m="3"><label>Lensing W</label><input id="ww" type="range" min="0.05" max="4" step="0.05" value="0.5"><span class="val" id="wwv"></span></div>
+  <div class="row" data-m="3"><label>Other-side image</label><input id="imgfile2" type="file" accept="image/*"></div>
+  <div class="row" data-m="1,2"><label>Accretion disk</label><input id="disk" type="checkbox" checked></div>
+  <div class="row" data-m="1,2"><label>Disk inner (M)</label><input id="rin" type="range" min="1.5" max="10" step="0.1" value="3"><span class="val" id="rinv"></span></div>
+  <div class="row" data-m="1,2"><label>Disk outer (M)</label><input id="rout" type="range" min="5" max="40" step="0.5" value="14"><span class="val" id="routv"></span></div>
+  <div class="row" data-m="1,2"><label>Disk thickness (M)</label><input id="dthick" type="range" min="0.05" max="2" step="0.05" value="0.4"><span class="val" id="dthickv"></span></div>
+  <div class="row" data-m="1,2"><label>Disk brightness</label><input id="dbright" type="range" min="0.2" max="3" step="0.1" value="1"><span class="val" id="dbrightv"></span></div>
+  <div class="row" data-m="1,2"><label>Doppler beaming</label><input id="doppler" type="checkbox" checked></div>
+  <div class="row" data-m="1,2"><label>Animate disk (uses GPU)</label><input id="anim" type="checkbox"></div>
+  <div class="row"><label>Background</label>
+    <select id="bg">
+      <option value="2" selected>Grid sphere</option>
+      <option value="1">Starfield</option>
+      <option value="3">Image</option>
+      <option value="0">None</option>
+    </select></div>
+  <div class="row"><label>Sky image</label><input id="imgfile" type="file" accept="image/*"></div>
+  <div class="row"><label>Steps / ray</label><input id="steps" type="range" min="80" max="1200" step="20" value="512"><span class="val" id="stepsv"></span></div>
+  <div class="row"><label>Step scale</label><input id="ss" type="range" min="0.03" max="0.4" step="0.01" value="0.08"><span class="val" id="ssv"></span></div>
+  <div class="row"><label>Resolution</label><input id="res" type="range" min="0.4" max="1.5" step="0.1" value="1"><span class="val" id="resv"></span></div>
+  <div class="row"><label>Exposure</label><input id="exp" type="range" min="0.4" max="2.5" step="0.1" value="1.2"><span class="val" id="expv"></span></div>
+  <div class="row"><label>Bloom</label><input id="bloom" type="checkbox" checked></div>
+  <div class="row"><label>Bloom amount</label><input id="bloomamt" type="range" min="0" max="2" step="0.05" value="0.7"><span class="val" id="bloomamtv"></span></div>
+</div>
+
+<div id="err"><div>
+  <h2>WebGPU not available</h2>
+  <p>This ray tracer runs entirely on the GPU via WebGPU. Open it in a recent
+  <b>Chrome</b>, <b>Edge</b>, or <b>Chrome-based</b> browser (v113+). Firefox/Safari need WebGPU enabled.</p>
+  <p>If you opened the file directly and see this, try serving it:
+  <br><code>python -m http.server</code> then visit <code>localhost:8000</code>.</p>
+  <p id="errmsg" style="color:#c66"></p>
+</div></div>
+
+<script>
+// ===========================================================================
+//  WGSL: the metric-agnostic geodesic engine, transliterated line-for-line
+//  from test/engine.mjs (which the Node suite validates against GR).
+//  Forward-mode autodiff (dual numbers carrying the full 4-gradient) lets ONE
+//  metric evaluation produce every partial the Hamiltonian needs. The metric
+//  is the ONLY physics-specific code — everything below `metricInverse` is generic.
+// ===========================================================================
+const WGSL = /* wgsl */`
+struct U {
+  camPos   : vec4<f32>,   // xyz position, w = tan(fov/2)
+  camRight : vec4<f32>,   // xyz basis,    w = aspect
+  camUp    : vec4<f32>,   // xyz basis,    w = mass M
+  camFwd   : vec4<f32>,   // xyz basis,    w = time
+  p0       : vec4<f32>,   // rIn, rOut, escapeR, spin
+  p1       : vec4<f32>,   // maxSteps, stepScale, metric, diskOn
+  p2       : vec4<f32>,   // bgMode, exposure, hmin, hmax
+  p3       : vec4<f32>,   // dopplerOn, diskBrightness, diskHalfThickness, _
+  p4       : vec4<f32>,   // wormhole: throatRadius ρ, throatHalfLen a, lensing M, image2Loaded
+};
+@group(0) @binding(0) var<uniform> u : U;
+@group(0) @binding(1) var skyTex : texture_2d<f32>;
+@group(0) @binding(2) var skySamp : sampler;
+@group(0) @binding(3) var skyTex2 : texture_2d<f32>;   // wormhole: "other universe" sky
+
+// ---- dual numbers: value v, gradient d = (d/dt, d/dx, d/dy, d/dz) -----------
+struct Dual { v : f32, d : vec4<f32> };
+fn dC(v : f32) -> Dual { return Dual(v, vec4<f32>(0.0)); }
+fn dAdd(a : Dual, b : Dual) -> Dual { return Dual(a.v + b.v, a.d + b.d); }
+fn dSub(a : Dual, b : Dual) -> Dual { return Dual(a.v - b.v, a.d - b.d); }
+fn dMul(a : Dual, b : Dual) -> Dual { return Dual(a.v * b.v, a.d * b.v + a.v * b.d); }
+fn dDiv(a : Dual, b : Dual) -> Dual { return Dual(a.v / b.v, (a.d * b.v - a.v * b.d) / (b.v * b.v)); }
+fn dMulS(d : Dual, s : f32) -> Dual { return Dual(d.v * s, d.d * s); }
+fn dSDiv(s : f32, b : Dual) -> Dual { return Dual(s / b.v, (-s * b.d) / (b.v * b.v)); }
+fn dSqrt(a : Dual) -> Dual { let r = sqrt(a.v); return Dual(r, a.d / (2.0 * r)); }
+
+// ---- the spacetime: contravariant metric g^{ab} as a 4x4 (row-major) of duals
+struct Metric { c : array<Dual, 16> };
+
+fn metricInverse(q : vec4<f32>, metric : i32, M : f32, a : f32) -> Metric {
+  var m : Metric;
+  for (var i = 0; i < 16; i = i + 1) { m.c[i] = dC(0.0); }
+
+  if (metric == 0) {                       // Minkowski (-,+,+,+)
+    m.c[0]  = dC(-1.0);
+    m.c[5]  = dC(1.0);
+    m.c[10] = dC(1.0);
+    m.c[15] = dC(1.0);
+    return m;
+  }
+
+  if (metric == 2) {
+    // Kerr in Kerr-Schild Cartesian coords (spin a about z). g^{μν} = η^{μν} - f lᵘlᵛ.
+    // Horizon-penetrating (no coord-singularity at r₊) → f32-friendly. a=0 → Schwarzschild.
+    // Written in flat SSA form (one binary op per let): equivalent on the GPU, and
+    // avoids a nested-call evaluation bug in the CPU interpreter used for testing.
+    let kx = Dual(q.y, vec4<f32>(0.0, 1.0, 0.0, 0.0));
+    let ky = Dual(q.z, vec4<f32>(0.0, 0.0, 1.0, 0.0));
+    let kz = Dual(q.w, vec4<f32>(0.0, 0.0, 0.0, 1.0));
+    let a2 = a * a;
+    let a2d = dC(a2);
+    let kx2 = dMul(kx, kx);
+    let ky2 = dMul(ky, ky);
+    let kz2 = dMul(kz, kz);
+    let sxy = dAdd(kx2, ky2);
+    let rho2 = dAdd(sxy, kz2);
+    let w = dSub(rho2, a2d);
+    let ww = dMul(w, w);
+    let z2t = dMulS(kz2, 4.0 * a2);
+    let disc = dAdd(ww, z2t);
+    let root = dSqrt(disc);                                   // sqrt(w² + 4a²z²)
+    let wD = dAdd(w, root);
+    let r2 = dMulS(wD, 0.5);
+    let r = dSqrt(r2);
+    let r2a = dAdd(r2, a2d);                                  // r² + a²
+    let rkx = dMul(r, kx);
+    let aky = dMulS(ky, a);
+    let lxn = dAdd(rkx, aky);
+    let lx = dDiv(lxn, r2a);                                  // (rx + ay)/(r²+a²)
+    let rky = dMul(r, ky);
+    let akx = dMulS(kx, a);
+    let lyn = dSub(rky, akx);
+    let ly = dDiv(lyn, r2a);                                  // (ry - ax)/(r²+a²)
+    let lz = dDiv(kz, r);                                     // z/r
+    let r3 = dMul(r2, r);
+    let r4 = dMul(r2, r2);
+    let azz = dMulS(kz2, a2);
+    let denom = dAdd(r4, azz);
+    let r3M = dMulS(r3, 2.0 * M);
+    let f = dDiv(r3M, denom);                                 // 2Mr³/(r⁴+a²z²)
+    let negone = dC(-1.0);
+    let one = dC(1.0);
+    m.c[0] = dSub(negone, f);                                 // g^00 = -1 - f
+    let g0x = dMul(f, lx); let g0y = dMul(f, ly); let g0z = dMul(f, lz);
+    m.c[1] = g0x; m.c[4] = g0x;
+    m.c[2] = g0y; m.c[8] = g0y;
+    m.c[3] = g0z; m.c[12] = g0z;
+    let lxlx = dMul(lx, lx); let flxlx = dMul(f, lxlx);
+    let lyly = dMul(ly, ly); let flyly = dMul(f, lyly);
+    let lzlz = dMul(lz, lz); let flzlz = dMul(f, lzlz);
+    m.c[5]  = dSub(one, flxlx);
+    m.c[10] = dSub(one, flyly);
+    m.c[15] = dSub(one, flzlz);
+    let lxly = dMul(lx, ly); let flxly = dMul(f, lxly); let gxy = dMulS(flxly, -1.0);
+    let lxlz = dMul(lx, lz); let flxlz = dMul(f, lxlz); let gxz = dMulS(flxlz, -1.0);
+    let lylz = dMul(ly, lz); let flylz = dMul(f, lylz); let gyz = dMulS(flylz, -1.0);
+    m.c[6] = gxy; m.c[9] = gxy;
+    m.c[7] = gxz; m.c[13] = gxz;
+    m.c[11] = gyz; m.c[14] = gyz;
+    return m;
+  }
+
+  // Schwarzschild, isotropic Cartesian coordinates (single hole at origin).
+  //   A = 1 - M/2ρ,  B = 1 + M/2ρ;  g^tt = -(B/A)²,  g^ii = B^-4
+  let x = Dual(q.y, vec4<f32>(0.0, 1.0, 0.0, 0.0));
+  let y = Dual(q.z, vec4<f32>(0.0, 0.0, 1.0, 0.0));
+  let z = Dual(q.w, vec4<f32>(0.0, 0.0, 0.0, 1.0));
+  let rho  = dSqrt(dAdd(dAdd(dMul(x, x), dMul(y, y)), dMul(z, z)));
+  let half = dSDiv(M * 0.5, rho);
+  let A = dSub(dC(1.0), half);
+  let B = dAdd(dC(1.0), half);
+  let B2 = dMul(B, B);
+  let B4 = dMul(B2, B2);
+  let ratio = dDiv(B, A);
+  let gtt = dMulS(dMul(ratio, ratio), -1.0);
+  let gii = dSDiv(1.0, B4);
+  m.c[0]  = gtt;
+  m.c[5]  = gii;
+  m.c[10] = gii;
+  m.c[15] = gii;
+  return m;
+}
+
+// ---- Hamiltonian geodesic RHS (metric-agnostic) -----------------------------
+//   dq^i/dλ = g^{ij} p_j ;  dp_i/dλ = -1/2 (∂_i g^{ab}) p_a p_b
+struct State { q : vec4<f32>, p : vec4<f32> };
+
+fn rhs(s : State, metric : i32, M : f32, a : f32) -> State {
+  var m = metricInverse(s.q, metric, M, a);
+  var pv = s.p;
+  var dq = vec4<f32>(0.0);
+  for (var i = 0; i < 4; i = i + 1) {
+    var acc = 0.0;
+    for (var j = 0; j < 4; j = j + 1) { acc = acc + m.c[i * 4 + j].v * pv[j]; }
+    dq[i] = acc;
+  }
+  var dp = vec4<f32>(0.0);
+  for (var i = 0; i < 4; i = i + 1) {
+    var acc = 0.0;
+    for (var a = 0; a < 4; a = a + 1) {
+      for (var b = 0; b < 4; b = b + 1) {
+        acc = acc + m.c[a * 4 + b].d[i] * pv[a] * pv[b];
+      }
+    }
+    dp[i] = -0.5 * acc;
+  }
+  return State(dq, dp);
+}
+
+fn rk4(s : State, h : f32, metric : i32, M : f32, a : f32) -> State {
+  let k1 = rhs(s, metric, M, a);
+  let s2 = State(s.q + k1.q * (h * 0.5), s.p + k1.p * (h * 0.5));
+  let k2 = rhs(s2, metric, M, a);
+  let s3 = State(s.q + k2.q * (h * 0.5), s.p + k2.p * (h * 0.5));
+  let k3 = rhs(s3, metric, M, a);
+  let s4 = State(s.q + k3.q * h, s.p + k3.p * h);
+  let k4 = rhs(s4, metric, M, a);
+  return State(
+    s.q + (h / 6.0) * (k1.q + 2.0 * k2.q + 2.0 * k3.q + k4.q),
+    s.p + (h / 6.0) * (k1.p + 2.0 * k2.p + 2.0 * k3.p + k4.p),
+  );
+}
+
+fn makePhoton(pos : vec3<f32>, dir : vec3<f32>, metric : i32, M : f32, a : f32) -> State {
+  // General null initial condition (works for non-diagonal Kerr too): set covariant
+  // spatial momentum p_i = dir_i (≈ coordinate direction at the far, weak-field camera),
+  // then solve A p_t² + 2B p_t + C = 0. Take the "+" (future-directed) root: in ingoing
+  // Kerr-Schild coords it is the branch that actually falls inward — the other gives an
+  // empty shadow. Harmless for diagonal metrics (spatial path is the same either way).
+  let q = vec4<f32>(0.0, pos.x, pos.y, pos.z);
+  let m = metricInverse(q, metric, M, a);
+  let px = dir.x;  let py = dir.y;  let pz = dir.z;
+  let A = m.c[0].v;
+  let B = m.c[1].v * px + m.c[2].v * py + m.c[3].v * pz;             // g^{0i} p_i
+  let C = m.c[5].v * px * px + m.c[10].v * py * py + m.c[15].v * pz * pz
+        + 2.0 * (m.c[6].v * px * py + m.c[7].v * px * pz + m.c[11].v * py * pz);
+  let disc = max(B * B - A * C, 0.0);
+  let p0 = (-B + sqrt(disc)) / A;          // future-directed root (falls inward)
+  return State(q, vec4<f32>(p0, px, py, pz));
+}
+
+// ---- shading ---------------------------------------------------------------
+fn hash31(p3 : vec3<f32>) -> f32 {
+  var p = fract(p3 * 0.1031);
+  p = p + dot(p, p.zyx + 31.32);
+  return fract((p.x + p.y) * p.z);
+}
+fn starLayer(dir : vec3<f32>, scale : f32, thresh : f32) -> f32 {
+  let p = dir * scale;
+  let i = floor(p);
+  let f = p - i;
+  let r = hash31(i);
+  if (r < thresh) { return 0.0; }
+  let c = vec3<f32>(hash31(i + 1.3), hash31(i + 2.7), hash31(i + 4.1));
+  let d = length(f - c);
+  let bright = (r - thresh) / (1.0 - thresh);
+  return bright * smoothstep(0.09, 0.0, d);
+}
+fn starfield(dir : vec3<f32>) -> vec3<f32> {
+  var col = mix(vec3<f32>(0.015, 0.02, 0.05), vec3<f32>(0.02, 0.01, 0.03), dir.y * 0.5 + 0.5);
+  let s = starLayer(dir, 180.0, 0.975) + starLayer(dir, 320.0, 0.985) * 0.8
+        + starLayer(dir, 90.0, 0.99) * 1.3;
+  return col + vec3<f32>(0.95, 0.97, 1.0) * s;
+}
+
+const PI : f32 = 3.14159265359;
+fn gridLine(c : f32, spacing : f32, width : f32) -> f32 {
+  let d = abs(fract(c / spacing + 0.5) - 0.5) * spacing;   // angular distance to nearest line
+  return smoothstep(width, width * 0.4, d);
+}
+// Celestial-sphere test pattern (cf. the Interstellar paper, arXiv:1605.08293):
+// four coloured azimuth quadrants, dimmer southern hemisphere, lat/long grid.
+// Lensing is read directly off how the quadrant edges and grid lines warp.
+fn celestial(dir : vec3<f32>) -> vec3<f32> {
+  let theta = acos(clamp(dir.z, -1.0, 1.0));   // polar angle from +z (disk normal)
+  let phi = atan2(dir.y, dir.x);               // azimuth -pi..pi
+  let quad = i32(floor((phi + PI) / (PI * 0.5))) % 4;
+  var base = vec3<f32>(0.18, 0.42, 0.85);                  // quadrant 0: blue
+  if (quad == 1) { base = vec3<f32>(0.92, 0.62, 0.16); }   // amber
+  else if (quad == 2) { base = vec3<f32>(0.22, 0.72, 0.42); } // green
+  else if (quad == 3) { base = vec3<f32>(0.85, 0.28, 0.55); } // magenta
+  if (dir.z < 0.0) { base = base * 0.4; }       // southern hemisphere dimmer
+  let latDeg = theta * 180.0 / PI;
+  let lonDeg = (phi + PI) * 180.0 / PI;
+  let g = max(gridLine(latDeg, 15.0, 0.6), gridLine(lonDeg, 15.0, 0.6));
+  return mix(base, vec3<f32>(1.0), g * 0.85);
+}
+// User-loaded sky image, equirectangular (lat/long) mapping. textureSampleLevel (not
+// textureSample) because background() is called from non-uniform control flow, and the
+// per-pixel uv has wild derivatives under lensing — explicit LOD 0 avoids artifacts.
+fn skyImage(dir : vec3<f32>) -> vec3<f32> {
+  let phi = atan2(dir.y, dir.x);                 // longitude -pi..pi
+  let theta = acos(clamp(dir.z, -1.0, 1.0));     // colatitude 0..pi (pole = spin/disk axis)
+  let uv = vec2<f32>(phi / (2.0 * PI) + 0.5, theta / PI);
+  return textureSampleLevel(skyTex, skySamp, uv, 0.0).rgb * u.p2.y;  // * exposure
+}
+fn background(dir : vec3<f32>) -> vec3<f32> {
+  let mode = i32(u.p2.x + 0.5);                 // 0 none, 1 starfield, 2 grid, 3 image
+  if (mode == 0) { return vec3<f32>(0.0); }
+  if (mode == 2) { return celestial(dir); }
+  if (mode == 3) { return skyImage(dir); }
+  return starfield(dir);
+}
+fn skyImage2(dir : vec3<f32>) -> vec3<f32> {
+  let phi = atan2(dir.y, dir.x);
+  let theta = acos(clamp(dir.z, -1.0, 1.0));
+  let uv = vec2<f32>(phi / (2.0 * PI) + 0.5, theta / PI);
+  return textureSampleLevel(skyTex2, skySamp, uv, 0.0).rgb * u.p2.y;
+}
+// The wormhole's far side. If a second image is loaded, use it; otherwise a warm-tinted
+// grid sphere so the two universes are visually distinct out of the box.
+fn otherBackground(dir : vec3<f32>) -> vec3<f32> {
+  if (u.p4.w > 0.5) { return skyImage2(dir); }
+  let c = celestial(dir);
+  return c.zyx * vec3<f32>(1.15, 0.95, 0.7);
+}
+fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
+  let rIn = u.p0.x;  let rOut = u.p0.y;
+  let t = clamp((r - rIn) / (rOut - rIn), 0.0, 1.0);   // 0 inner .. 1 outer
+  // Colour comes from a temperature ramp; the redshift factor shifts the *temperature*
+  // (blueshift → hotter/inner colours, redshift → cooler) — staying on the ramp avoids
+  // spurious hues. inner = blue-white, mid = amber, outer = deep red.
+  let ts = clamp(t - (dop - 1.0) * 0.6, 0.0, 1.0);
+  let cInner = vec3<f32>(0.85, 0.92, 1.0);
+  let cMid   = vec3<f32>(1.0, 0.8, 0.42);
+  let cOuter = vec3<f32>(0.9, 0.27, 0.06);
+  var col = mix(cInner, cMid, smoothstep(0.0, 0.4, ts));
+  col = mix(col, cOuter, smoothstep(0.4, 1.0, ts));
+  let edge = smoothstep(0.0, 0.07, t) * smoothstep(1.0, 0.8, t);
+  let swirl = 0.5 + 0.5 * sin(phi * 3.0 - u.camFwd.w * 1.4); // azimuthal only (no radial bands)
+  let bright = edge * (1.3 - 0.6 * t) * (0.6 + 0.5 * swirl);
+  let beam = pow(dop, 3.0);                           // relativistic beaming (δ³)
+  return col * bright * beam * u.p3.y * u.p2.y;       // * diskBrightness * exposure
+}
+
+// Kerr radial coordinate r(x,y,z): the natural (oblate) radius whose level sets are the
+// Kerr horizons. r² = ½((ρ²-a²) + sqrt((ρ²-a²)²+4a²z²)),  ρ²=x²+y²+z².
+fn kerrRadius(pos : vec3<f32>, a2 : f32) -> f32 {
+  let w = dot(pos, pos) - a2;
+  return sqrt(max(0.5 * (w + sqrt(w * w + 4.0 * a2 * pos.z * pos.z)), 0.0));
+}
+
+// ---- the ray tracer --------------------------------------------------------
+fn trace(camPos : vec3<f32>, dir : vec3<f32>) -> vec3<f32> {
+  let metric = i32(u.p1.z + 0.5);
+  let M = u.camUp.w;
+  let a = u.p0.w;                                   // spin (0 unless Kerr)
+  let maxSteps = i32(u.p1.x + 0.5);
+  let stepScale = u.p1.y;
+  let escapeR = u.p0.z;
+  let hmin = u.p2.z;  let hmax = u.p2.w;
+  let diskOn = u.p1.w;
+
+  let H = max(u.p3.z, 1e-3);                        // disk half-thickness (vertical scale)
+  var s = makePhoton(camPos, dir, metric, M, a);
+  var accum = vec3<f32>(0.0);                        // emission gathered along the ray
+  var trans = 1.0;                                   // remaining transmittance (1 → clear)
+  for (var i = 0; i < maxSteps; i = i + 1) {
+    let pos = s.q.yzw;
+    let rho = length(pos);
+    // Capture at each spacetime's event horizon — the metric-derived null surface (Δ=0),
+    // following standard GRRT practice (e.g. RAPTOR/ipole/Blacklight). NOT an arbitrary
+    // "2GM": it is the actual horizon, and reduces to 2M for Schwarzschild.
+    //   • Kerr:  the Kerr radial coordinate r < r₊ = M + √(M²−a²) — exact at every
+    //            latitude (the Euclidean radius is only right on the equator).
+    //   • static slicings (isotropic Schwarzschild): the lapse → 0, so the redshift
+    //            -g^{00}=1/lapse² → ∞; a threshold catches it. (Also a deep-field safety.)
+    // FLAT: redshift=1, no horizon → never captured. radial is kept for step refinement.
+    let gm = metricInverse(s.q, metric, M, a);
+    let redshift = -gm.c[0].v;
+    let radial = (gm.c[5].v * pos.x * pos.x + gm.c[10].v * pos.y * pos.y + gm.c[15].v * pos.z * pos.z
+      + 2.0 * (gm.c[6].v * pos.x * pos.y + gm.c[7].v * pos.x * pos.z + gm.c[11].v * pos.y * pos.z))
+      / max(dot(pos, pos), 1e-6);
+    var captured = redshift > 50.0;
+    if (metric == 2) {
+      let rPlus = M + sqrt(max(M * M - a * a, 0.0));
+      if (kerrRadius(pos, a * a) < rPlus * 1.01) { captured = true; }
+    }
+    if (captured) { return accum; }                  // disk emission in front of a black hole
+    if (rho > escapeR) {
+      let d = rhs(s, metric, M, a);                  // bent coordinate velocity
+      return accum + trans * background(normalize(d.q.yzw));
+    }
+    let refine = 0.25 + 0.75 * clamp(radial, 0.0, 1.0);
+    let h = clamp(stepScale * rho * refine, hmin, hmax);
+    let sN = rk4(s, h, metric, M, a);
+    // Volumetric accretion disk: a Gaussian slab about z=0. The disk integral is sub-sampled
+    // ALONG the segment (independent of the geodesic step), so a thick / edge-on disk stays
+    // smooth without forcing tiny geodesic steps. Emission–absorption transfer dI=(S−I)κ ds,
+    // with emission written S·κ so the opaque disk emerges at its source colour S.
+    let p0 = s.q.yzw;  let p1 = sN.q.yzw;
+    let zlo = min(p0.z, p1.z);  let zhi = max(p0.z, p1.z);
+    let midr = length(0.5 * (p0.xy + p1.xy));
+    if (diskOn > 0.5 && zlo < 3.0 * H && zhi > -3.0 * H && midr > u.p0.x - h && midr < u.p0.y + h) {
+      let vray = normalize(p1 - p0);
+      let ds = length(p1 - p0) / 8.0;
+      let lapse = 1.0 / sqrt(max(redshift, 1e-3));   // gravitational redshift (slowly varying)
+      for (var k = 0; k < 8; k = k + 1) {
+        let pp = mix(p0, p1, (f32(k) + 0.5) / 8.0);
+        let rc = sqrt(pp.x * pp.x + pp.y * pp.y);
+        if (rc >= u.p0.x && rc <= u.p0.y && abs(pp.z) < 3.0 * H) {
+          let dens = exp(-(pp.z * pp.z) / (H * H));
+          let tang = vec3<f32>(-pp.y, pp.x, 0.0) / rc;
+          let beta = clamp(sqrt(M / rc), 0.0, 0.95);
+          let delta = sqrt(1.0 - beta * beta) / (1.0 - beta * dot(tang, -vray));
+          let g = select(1.0, delta, u.p3.x > 0.5) * lapse;
+          let kappa = dens * 4.0;
+          accum = accum + trans * disk(rc, atan2(pp.y, pp.x), g) * kappa * ds;
+          trans = trans * exp(-kappa * ds);
+        }
+      }
+      if (trans < 0.02) { return accum; }            // fully opaque
+    }
+    s = sN;
+  }
+  return accum;   // step budget exhausted near the hole → trapped → black (disk over it)
+}
+
+// ---- Ellis/Dneg wormhole (Thorne et al. 2015, arXiv:1502.03809) -------------
+// Ultrastatic: ds² = -dt² + dℓ² + r(ℓ)²(dθ² + sin²θ dφ²). No horizon — rays either thread
+// the throat to the OTHER universe (ℓ<0) or are lensed back to ours (ℓ>0). Spherical
+// symmetry ⇒ every ray is planar, so we integrate a pole-free 2D problem per ray.
+//   r(ℓ) = ρ for |ℓ|≤a;  else ρ + M[x·atan x − ½ln(1+x²)], x = 2(|ℓ|−a)/(πM).
+fn wh_r(l : f32) -> f32 {
+  let rho = u.p4.x;  let a = u.p4.y;  let Mw = max(u.p4.z, 1e-4);
+  let al = abs(l);
+  if (al <= a) { return rho; }
+  let x = 2.0 * (al - a) / (PI * Mw);
+  return rho + Mw * (x * atan(x) - 0.5 * log(1.0 + x * x));
+}
+fn wh_drdl(l : f32) -> f32 {
+  let a = u.p4.y;  let Mw = max(u.p4.z, 1e-4);
+  let al = abs(l);
+  if (al <= a) { return 0.0; }
+  return sign(l) * (2.0 / PI) * atan(2.0 * (al - a) / (PI * Mw));
+}
+// state = (ℓ, ℓ̇, φ). Second-order radial eqn ℓ̈ = (b²/r³)(dr/dℓ) is smooth through the
+// turning point (no sqrt), so RK4 handles reflect-vs-thread without special cases.
+fn wh_rhs(st : vec3<f32>, b : f32) -> vec3<f32> {
+  let r = wh_r(st.x);
+  return vec3<f32>(st.y, (b * b) / (r * r * r) * wh_drdl(st.x), b / (r * r));
+}
+fn traceWormhole(camPos : vec3<f32>, dir : vec3<f32>) -> vec3<f32> {
+  let lcam = length(camPos);
+  let rhat = camPos / lcam;
+  let vr = dot(dir, rhat);                          // radial component of the view ray
+  let tvec = dir - vr * rhat;
+  let tmag = length(tvec);
+  var that = rhat;
+  if (tmag > 1e-5) { that = tvec / tmag; }
+  let rcam = wh_r(lcam);
+  let b = rcam * tmag;                              // impact parameter (b < ρ ⇒ threads throat)
+  var st = vec3<f32>(lcam, vr, 0.0);
+  let maxSteps = i32(u.p1.x + 0.5);
+  let stepScale = u.p1.y;
+  let hmin = u.p2.z;  let hmax = u.p2.w;
+  let lfar = max(lcam * 1.4, 40.0);
+  for (var i = 0; i < maxSteps; i = i + 1) {
+    if (abs(st.x) > lfar) { break; }
+    let h = clamp(stepScale * (abs(st.x) + wh_r(st.x)), hmin, hmax);
+    let k1 = wh_rhs(st, b);
+    let k2 = wh_rhs(st + 0.5 * h * k1, b);
+    let k3 = wh_rhs(st + 0.5 * h * k2, b);
+    let k4 = wh_rhs(st + h * k3, b);
+    st = st + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+  }
+  let phi = st.z;
+  let radialDir = cos(phi) * rhat + sin(phi) * that;
+  let tangDir = -sin(phi) * rhat + cos(phi) * that;
+  let vel = st.y * radialDir + (b / max(wh_r(st.x), 1e-3)) * tangDir;
+  let outDir = normalize(vel);
+  if (st.x < 0.0) { return otherBackground(outDir); } // emerged in the other universe
+  return background(outDir);                           // lensed back into ours
+}
+
+// ---- fullscreen triangle + entry points ------------------------------------
+struct VSOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex
+fn vs(@builtin(vertex_index) vi : u32) -> VSOut {
+  var p = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+  var o : VSOut;
+  o.pos = vec4<f32>(p[vi], 0.0, 1.0);
+  o.uv = p[vi];
+  return o;
+}
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let dir = normalize(u.camFwd.xyz
+      + uv.x * u.camRight.w * u.camPos.w * u.camRight.xyz   // aspect * tanHalfFov
+      + uv.y * u.camPos.w * u.camUp.xyz);
+  if (i32(u.p1.z + 0.5) == 3) {                             // wormhole has its own trace path
+    return vec4<f32>(traceWormhole(u.camPos.xyz, dir), 1.0);
+  }
+  return vec4<f32>(trace(u.camPos.xyz, dir), 1.0);          // linear HDR; tonemap in composite
+}
+`;
+
+// ===========================================================================
+//  Post-processing: HDR bloom. The scene renders to an rgba16float texture; we
+//  bright-pass + separably blur it (half-res), then composite scene+bloom and tonemap.
+// ===========================================================================
+const POST_WGSL = /* wgsl */`
+struct VO { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex
+fn vs(@builtin(vertex_index) vi : u32) -> VO {
+  var p = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+  var o : VO;
+  o.pos = vec4<f32>(p[vi], 0.0, 1.0);
+  o.uv = p[vi] * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);  // clip → texture uv (Y flipped)
+  return o;
+}
+
+// --- separable Gaussian blur, with an optional bright-pass on the first (H) pass ---
+struct Blur { dir : vec2<f32>, threshold : f32, pad : f32 };
+@group(0) @binding(0) var samp : sampler;
+@group(0) @binding(1) var src : texture_2d<f32>;
+@group(0) @binding(2) var<uniform> bl : Blur;
+fn bright(c : vec3<f32>) -> vec3<f32> {
+  if (bl.threshold >= 0.0) { return max(c - vec3<f32>(bl.threshold), vec3<f32>(0.0)); }
+  return c;
+}
+@fragment
+fn fsBlur(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let w = array<f32, 5>(0.2270270, 0.1945946, 0.1216216, 0.0540541, 0.0162162);
+  var col = bright(textureSampleLevel(src, samp, uv, 0.0).rgb) * w[0];
+  for (var i = 1; i < 5; i = i + 1) {
+    let o = bl.dir * f32(i);
+    col = col + bright(textureSampleLevel(src, samp, uv + o, 0.0).rgb) * w[i];
+    col = col + bright(textureSampleLevel(src, samp, uv - o, 0.0).rgb) * w[i];
+  }
+  return vec4<f32>(col, 1.0);
+}
+
+// --- composite: scene HDR + bloom, then tonemap + gamma to the swapchain ---
+struct Comp { bloom : f32, pad0 : f32, pad1 : f32, pad2 : f32 };
+@group(0) @binding(0) var csamp : sampler;
+@group(0) @binding(1) var hdrTex : texture_2d<f32>;
+@group(0) @binding(2) var bloomTex : texture_2d<f32>;
+@group(0) @binding(3) var<uniform> cp : Comp;
+@fragment
+fn fsComposite(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  var col = textureSampleLevel(hdrTex, csamp, uv, 0.0).rgb;
+  col = col + textureSampleLevel(bloomTex, csamp, uv, 0.0).rgb * cp.bloom;
+  col = col / (col + vec3<f32>(1.0));                        // Reinhard tonemap
+  col = pow(col, vec3<f32>(1.0 / 2.2));                      // gamma
+  return vec4<f32>(col, 1.0);
+}
+`;
+
+// ===========================================================================
+//  Host: WebGPU setup, camera, UI, render loop.
+// ===========================================================================
+(async function () {
+  const fail = (msg) => {
+    document.getElementById("err").style.display = "grid";
+    if (msg) document.getElementById("errmsg").textContent = msg;
+  };
+  if (!navigator.gpu) return fail("navigator.gpu is undefined.");
+
+  let adapter;
+  try { adapter = await navigator.gpu.requestAdapter(); }
+  catch (e) { return fail(String(e)); }
+  if (!adapter) return fail("No suitable GPU adapter.");
+  const device = await adapter.requestDevice();
+
+  const canvas = document.getElementById("gpu");
+  const ctx = canvas.getContext("webgpu");
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  ctx.configure({ device, format, alphaMode: "opaque" });
+
+  const HDR = "rgba16float";
+  async function makeModule(code, label) {
+    const m = device.createShaderModule({ code });
+    const inf = await m.getCompilationInfo();
+    const e = inf.messages.filter((x) => x.type === "error");
+    if (e.length) { fail(label + " shader error: " + e.map((x) => x.message).join(" | ")); return null; }
+    return m;
+  }
+  const sceneModule = await makeModule(WGSL, "scene");
+  const postModule = await makeModule(POST_WGSL, "post");
+  if (!sceneModule || !postModule) return;
+
+  // Scene → HDR; blur (bright-pass + Gaussian) → HDR; composite (+tonemap) → swapchain.
+  const scenePipeline = device.createRenderPipeline({
+    layout: "auto", vertex: { module: sceneModule, entryPoint: "vs" },
+    fragment: { module: sceneModule, entryPoint: "fs", targets: [{ format: HDR }] },
+    primitive: { topology: "triangle-list" },
+  });
+  const blurPipeline = device.createRenderPipeline({
+    layout: "auto", vertex: { module: postModule, entryPoint: "vs" },
+    fragment: { module: postModule, entryPoint: "fsBlur", targets: [{ format: HDR }] },
+    primitive: { topology: "triangle-list" },
+  });
+  const compositePipeline = device.createRenderPipeline({
+    layout: "auto", vertex: { module: postModule, entryPoint: "vs" },
+    fragment: { module: postModule, entryPoint: "fsComposite", targets: [{ format }] },
+    primitive: { topology: "triangle-list" },
+  });
+
+  const UBO_FLOATS = 36; // 9 * vec4
+  const ubuf = device.createBuffer({ size: UBO_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const blurHBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const blurVBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const compBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+  const sampler = device.createSampler({   // sky sampler: longitude wraps, clamp at poles
+    magFilter: "linear", minFilter: "linear", addressModeU: "repeat", addressModeV: "clamp-to-edge",
+  });
+  const postSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" }); // clamp
+  const TEX_USAGE = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT;
+  let skyTexture = device.createTexture({ size: [1, 1], format: "rgba8unorm-srgb", usage: TEX_USAGE });
+  device.queue.writeTexture({ texture: skyTexture }, new Uint8Array([12, 14, 22, 255]), { bytesPerRow: 4 }, [1, 1]);
+  let skyTexture2 = device.createTexture({ size: [1, 1], format: "rgba8unorm-srgb", usage: TEX_USAGE });
+  device.queue.writeTexture({ texture: skyTexture2 }, new Uint8Array([30, 16, 14, 255]), { bytesPerRow: 4 }, [1, 1]);
+  let image2Loaded = 0;
+
+  let sceneBind;
+  function rebuildSceneBind() {
+    sceneBind = device.createBindGroup({
+      layout: scenePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: ubuf } },
+        { binding: 1, resource: skyTexture.createView() },
+        { binding: 2, resource: sampler },
+        { binding: 3, resource: skyTexture2.createView() },
+      ],
+    });
+  }
+  rebuildSceneBind();
+
+  // Offscreen targets (recreated on resize): full-res HDR scene + two half-res blur buffers.
+  let texHDR, texBlurA, texBlurB, blurHBind, blurVBind, compBind;
+  function rebuildTargets(w, h) {
+    const hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+    [texHDR, texBlurA, texBlurB].forEach((t) => t && t.destroy());
+    texHDR = device.createTexture({ size: [w, h], format: HDR, usage: TEX_USAGE });
+    texBlurA = device.createTexture({ size: [hw, hh], format: HDR, usage: TEX_USAGE });
+    texBlurB = device.createTexture({ size: [hw, hh], format: HDR, usage: TEX_USAGE });
+    blurHBind = device.createBindGroup({ layout: blurPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: postSampler }, { binding: 1, resource: texHDR.createView() }, { binding: 2, resource: { buffer: blurHBuf } }] });
+    blurVBind = device.createBindGroup({ layout: blurPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: postSampler }, { binding: 1, resource: texBlurA.createView() }, { binding: 2, resource: { buffer: blurVBuf } }] });
+    compBind = device.createBindGroup({ layout: compositePipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: postSampler }, { binding: 1, resource: texHDR.createView() },
+      { binding: 2, resource: texBlurB.createView() }, { binding: 3, resource: { buffer: compBuf } }] });
+    // blur offsets in uv (bright-pass threshold on horizontal; vertical just blurs).
+    // threshold 0.7 so moderately bright disk/stars bloom, not only the brightest spots.
+    const spread = 2.5;
+    device.queue.writeBuffer(blurHBuf, 0, new Float32Array([spread / w, 0, 0.7, 0]));
+    device.queue.writeBuffer(blurVBuf, 0, new Float32Array([0, spread / hh, -1.0, 0]));
+  }
+  const u = new Float32Array(UBO_FLOATS);
+
+  // ---- camera --------------------------------------------------------------
+  const cam = { dist: 26, yaw: 0.6, pitch: 0.32, fov: 55 * Math.PI / 180 };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const norm = (a) => { const l = Math.hypot(...a); return [a[0] / l, a[1] / l, a[2] / l]; };
+
+  // ---- UI ------------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const ui = {
+    metric: $("metric"), mass: $("mass"), spin: $("spin"), disk: $("disk"),
+    wr: $("wr"), wa: $("wa"), ww: $("ww"),
+    rin: $("rin"), rout: $("rout"), dthick: $("dthick"), dbright: $("dbright"), doppler: $("doppler"),
+    anim: $("anim"), bg: $("bg"), steps: $("steps"), ss: $("ss"), res: $("res"), exp: $("exp"),
+    bloom: $("bloom"), bloomamt: $("bloomamt"),
+  };
+
+  // Show only the controls relevant to the selected spacetime (rows carry data-m="...").
+  function updateMetricUI() {
+    const m = ui.metric.value;
+    document.querySelectorAll("#panel .row[data-m]").forEach((row) => {
+      row.style.display = row.getAttribute("data-m").split(",").includes(m) ? "" : "none";
+    });
+  }
+
+  // Render on demand: only redraw when something changes. `dirty` is set by any
+  // interaction; the loop otherwise idles so the GPU isn't pegged on a still frame.
+  let dirty = true;
+  const invalidate = () => { dirty = true; };
+  function syncLabels() {
+    $("massv").textContent = (+ui.mass.value).toFixed(2);
+    $("spinv").textContent = (+ui.spin.value).toFixed(2);
+    $("wrv").textContent = (+ui.wr.value).toFixed(1);
+    $("wav").textContent = (+ui.wa.value).toFixed(1);
+    $("wwv").textContent = (+ui.ww.value).toFixed(2);
+    $("rinv").textContent = (+ui.rin.value).toFixed(1);
+    $("routv").textContent = (+ui.rout.value).toFixed(1);
+    $("dthickv").textContent = (+ui.dthick.value).toFixed(2);
+    $("dbrightv").textContent = (+ui.dbright.value).toFixed(1);
+    $("stepsv").textContent = ui.steps.value;
+    $("ssv").textContent = (+ui.ss.value).toFixed(2);
+    $("resv").textContent = (+ui.res.value).toFixed(1) + "x";
+    $("expv").textContent = (+ui.exp.value).toFixed(1);
+    $("bloomamtv").textContent = (+ui.bloomamt.value).toFixed(2);
+  }
+  Object.values(ui).forEach((el) => el.addEventListener("input", () => { syncLabels(); updateMetricUI(); resize(); invalidate(); }));
+  syncLabels();
+  updateMetricUI();
+
+  // Load a local image as the celestial sphere (equirectangular / 2:1 works best).
+  $("imgfile").addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const bmp = await createImageBitmap(file, { colorSpaceConversion: "none" });
+      skyTexture.destroy();
+      skyTexture = device.createTexture({ size: [bmp.width, bmp.height], format: "rgba8unorm-srgb", usage: TEX_USAGE });
+      device.queue.copyExternalImageToTexture({ source: bmp }, { texture: skyTexture }, [bmp.width, bmp.height]);
+      bmp.close();
+      rebuildSceneBind();
+      ui.bg.value = "3"; // switch Background → Image
+      invalidate();
+    } catch (err) {
+      console.error("sky image load failed:", err);
+    }
+  });
+
+  // Second image = the wormhole's other universe.
+  $("imgfile2").addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const bmp = await createImageBitmap(file, { colorSpaceConversion: "none" });
+      skyTexture2.destroy();
+      skyTexture2 = device.createTexture({ size: [bmp.width, bmp.height], format: "rgba8unorm-srgb", usage: TEX_USAGE });
+      device.queue.copyExternalImageToTexture({ source: bmp }, { texture: skyTexture2 }, [bmp.width, bmp.height]);
+      bmp.close();
+      image2Loaded = 1;
+      rebuildSceneBind();
+      invalidate();
+    } catch (err) {
+      console.error("second image load failed:", err);
+    }
+  });
+
+  // ---- pointer interaction -------------------------------------------------
+  let dragging = false, lx = 0, ly = 0;
+  canvas.addEventListener("pointerdown", (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener("pointerup", () => { dragging = false; });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    cam.yaw -= (e.clientX - lx) * 0.006;
+    cam.pitch += (e.clientY - ly) * 0.006;
+    cam.pitch = Math.max(-1.48, Math.min(1.48, cam.pitch));
+    lx = e.clientX; ly = e.clientY;
+    invalidate();
+  });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    cam.dist = Math.max(6, Math.min(120, cam.dist * Math.exp(e.deltaY * 0.0009)));
+    invalidate();
+  }, { passive: false });
+
+  // ---- resize --------------------------------------------------------------
+  function resize() {
+    const scale = +ui.res.value * Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.floor(innerWidth * scale));
+    const h = Math.max(1, Math.floor(innerHeight * scale));
+    if (canvas.width !== w || canvas.height !== h || !texHDR) {
+      canvas.width = w; canvas.height = h;
+      rebuildTargets(w, h);   // offscreen HDR + bloom buffers track the render size
+    }
+  }
+  addEventListener("resize", () => { resize(); invalidate(); });
+  resize();
+
+  // ---- render loop ---------------------------------------------------------
+  const fpsEl = $("fps");
+  let t0 = performance.now(), frames = 0, last = t0, lastDraw = 0, frozenTime = 0, idleShown = false;
+  const ANIM_FPS = 30;
+  function frame(now) {
+    // Render only when needed: on interaction (dirty), or — if animating — at a
+    // capped rate. Otherwise idle, so the GPU isn't redrawing a static image.
+    const animate = ui.anim.checked;
+    const due = animate && (now - lastDraw) >= 1000 / ANIM_FPS;
+    if (!dirty && !due) {
+      if (!idleShown) { fpsEl.textContent = "idle · " + canvas.width + "x" + canvas.height; idleShown = true; }
+      requestAnimationFrame(frame); return;
+    }
+    idleShown = false;
+
+    const time = animate ? (now - t0) / 1000 : frozenTime;
+    frozenTime = time;
+
+    const cp = cam.pitch, cy = cam.yaw;
+    const pos = [
+      cam.dist * Math.cos(cp) * Math.cos(cy),
+      cam.dist * Math.cos(cp) * Math.sin(cy),
+      cam.dist * Math.sin(cp),
+    ];
+    const fwd = norm([-pos[0], -pos[1], -pos[2]]);
+    const right = norm(cross(fwd, [0, 0, 1]));
+    const up = cross(right, fwd);
+    const M = +ui.mass.value;
+    const metric = +ui.metric.value;
+    const spin = metric === 2 ? (+ui.spin.value) * M : 0; // a = (a/M)·M, z-axis
+    const tanHalf = Math.tan(cam.fov / 2);
+    const aspect = canvas.width / canvas.height;
+    // Escape sphere must always enclose the camera, or rays "escape" on step 0 and
+    // the hole vanishes. Far-field step cap scales with it (flat space → big steps OK).
+    const escapeR = Math.max(60, cam.dist * 1.5);
+    const hmax = Math.max(4, escapeR * 0.05);
+
+    u.set([pos[0], pos[1], pos[2], tanHalf], 0);
+    u.set([right[0], right[1], right[2], aspect], 4);
+    u.set([up[0], up[1], up[2], M], 8);
+    u.set([fwd[0], fwd[1], fwd[2], time], 12);
+    const rIn = (+ui.rin.value) * M, rOut = Math.max((+ui.rout.value) * M, rIn + 0.5);
+    u.set([rIn, rOut, escapeR, spin], 16);                                  // rIn,rOut,escapeR,spin
+    u.set([+ui.steps.value, +ui.ss.value, metric, ui.disk.checked ? 1 : 0], 20);
+    u.set([+ui.bg.value, +ui.exp.value, 0.01, hmax], 24);
+    u.set([ui.doppler.checked ? 1 : 0, +ui.dbright.value, (+ui.dthick.value) * M, 0], 28); // dopplerOn, diskBrightness, halfThickness
+    u.set([+ui.wr.value, (+ui.wa.value) * 0.5, +ui.ww.value, image2Loaded], 32);            // wormhole: ρ, a, lensing, image2Loaded
+    device.queue.writeBuffer(ubuf, 0, u);
+    device.queue.writeBuffer(compBuf, 0, new Float32Array([ui.bloom.checked ? +ui.bloomamt.value : 0, 0, 0, 0]));
+
+    const target = (view) => ({ colorAttachments: [{ view, clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: "clear", storeOp: "store" }] });
+    const enc = device.createCommandEncoder();
+    const draw = (descView, pipe, bg) => {
+      const p = enc.beginRenderPass(target(descView));
+      p.setPipeline(pipe); p.setBindGroup(0, bg); p.draw(3); p.end();
+    };
+    draw(texHDR.createView(), scenePipeline, sceneBind);      // 1. ray-trace → HDR
+    draw(texBlurA.createView(), blurPipeline, blurHBind);     // 2. bright-pass + horizontal blur
+    draw(texBlurB.createView(), blurPipeline, blurVBind);     // 3. vertical blur
+    draw(ctx.getCurrentTexture().createView(), compositePipeline, compBind); // 4. composite + tonemap
+    device.queue.submit([enc.finish()]);
+
+    dirty = false;
+    lastDraw = now;
+    frames++;
+    if (now - last > 400) {
+      const fps = (frames * 1000 / (now - last)).toFixed(0);
+      fpsEl.textContent = fps + " fps · " + canvas.width + "x" + canvas.height;
+      frames = 0; last = now;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>

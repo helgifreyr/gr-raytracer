@@ -1,0 +1,17 @@
+Background panoramas — all equirectangular (2:1), ready to drop into the ray tracer
+as a celestial-sphere sky (either side of the wormhole, or any metric's background).
+
+milkyway_8k.jpg            8192x4096  — stylized Milky Way + stars
+starfield_8k.jpg           8192x4096  — pure starfield, no galactic band
+nasa_starmap_4k.jpg        3840x1920  — real sky: stars + Milky Way (Tycho/Hipparcos + Gaia)
+nasa_stars_only_4k.jpg     3840x1920  — point stars only, no Milky Way glow
+nasa_milkyway_band_4k.jpg  3840x1920  — Milky Way diffuse band only
+nasa_constellations_4k.jpg 3840x1920  — stars with constellation figures (artistic)
+
+Sources & licenses:
+- milkyway_8k, starfield_8k: Solar System Scope (solarsystemscope.com), CC BY 4.0.
+- nasa_*: NASA's Scientific Visualization Studio, "Deep Star Maps 2020" (E. Wright),
+  via Wikimedia Commons. Public domain (NASA).
+
+heic0611b.jpg — Hubble image, NASA/ESA (already present; NOT equirectangular, will
+                appear stretched if used as a sky).

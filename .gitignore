@@ -1,0 +1,5 @@
+node_modules/
+*.log
+
+# personal, machine-local Claude Code settings (permission mode, etc.)
+.claude/settings.local.json
