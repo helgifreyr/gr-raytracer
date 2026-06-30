@@ -290,3 +290,5 @@ validate the shader math.
   for the gridded/coloured celestial-sphere background (multiple lensed images of the sphere).
 - Sky panoramas in `images/` — Solar System Scope (CC BY 4.0) and NASA SVS Deep Star Maps
   (public domain); see `images/CREDITS.txt`.
+- Equations in the Physics/Engineering writeups rendered with [KaTeX](https://katex.org) (MIT),
+  vendored in `src/vendor/katex/` so the page works offline.

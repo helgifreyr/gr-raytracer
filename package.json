@@ -9,6 +9,7 @@
     "serve": "python -m http.server 8000"
   },
   "devDependencies": {
+    "katex": "^0.17.0",
     "wgsl_reflect": "^1.4.0"
   }
 }

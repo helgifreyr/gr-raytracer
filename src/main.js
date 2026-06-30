@@ -215,15 +215,16 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
   const overlayEl = $("overlay"), overlayContent = $("overlay-content");
   const contentCache = {};
 
-  // KaTeX, lazily loaded from a CDN the first time a writeup is opened, to render $…$ / $$…$$.
-  // (Only the docs overlay uses it; the simulation itself stays dependency-free.)
-  const KB = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/";
+  // KaTeX, vendored in src/vendor/katex/ (woff2 fonts included) and loaded lazily the first
+  // time a writeup is opened — so equations render offline, no CDN. Only the docs overlay uses
+  // it; the simulation itself stays dependency-free.
+  const KB = new URL("./vendor/katex/", import.meta.url).href;
   let katexReady = null;
   function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
   function loadKaTeX() {
     if (katexReady) return katexReady;
     const css = document.createElement("link"); css.rel = "stylesheet"; css.href = KB + "katex.min.css"; document.head.appendChild(css);
-    katexReady = loadScript(KB + "katex.min.js").then(() => loadScript(KB + "contrib/auto-render.min.js"));
+    katexReady = loadScript(KB + "katex.min.js").then(() => loadScript(KB + "auto-render.min.js"));
     return katexReady;
   }
   async function typeset(el) {
