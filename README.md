@@ -15,11 +15,11 @@ and their integration — is derived automatically.
 **Easiest:** open the **[live demo](https://helgifreyr.github.io/gr-raytracer/)** in Chrome or
 Edge (v113+ — WebGPU required).
 
-To run locally it's a single self-contained file — open `index.html` in the same browsers.
-If yours blocks WebGPU on `file://`, serve it:
+To run locally, **serve the folder** (the app loads its shaders as separate files, so opening
+`index.html` from `file://` won't work — it needs http):
 
 ```bash
-npm run serve          # python -m http.server 8000  → http://localhost:8000
+npm run serve          # or: python -m http.server 8000  → http://localhost:8000
 ```
 
 The panel only shows controls relevant to the selected spacetime (spin appears for Kerr,
@@ -257,13 +257,23 @@ ring, expect some f32 shimmer — that's the precision ceiling, not a logic bug.
 ## Files
 
 ```
-index.html          self-contained app: WGSL engine + WebGPU host + UI
-test/engine.mjs     double-precision JS twin of the WGSL engine
-test/test.mjs       physics validation against analytic GR
-test/wgsl_check.mjs WGSL parse smoke-test
-test/wgsl_exec.mjs  runs the real shader on CPU, compares to engine.mjs
-package.json        `npm test`, `npm run serve`
+index.html                page shell (canvas + control panel)
+src/main.js               WebGPU host (CPU): device, pipelines, textures, render loop, UI
+src/shaders/scene.wgsl    the geodesic engine + shading — runs once per pixel on the GPU
+src/shaders/post.wgsl     HDR bloom passes (bright-pass, blur, composite + tonemap)
+test/engine.mjs           double-precision JS twin of the WGSL geodesic engine
+test/test.mjs             physics validation against analytic GR
+test/wgsl_check.mjs       parse-check both shader files
+test/wgsl_exec.mjs        runs the real shader engine on the CPU, compares to engine.mjs
+package.json              `npm test`, `npm run serve`
 ```
+
+**Where the work happens:** `index.html` is just the shell; `src/main.js` (CPU) sets up WebGPU
+and orchestrates, but does no per-ray physics — it hands the camera + parameters to the GPU and
+issues draw calls. `src/shaders/scene.wgsl` is a fragment shader that the GPU runs **once per
+pixel, in parallel** — each invocation integrates one light ray's geodesic through curved
+spacetime. The `test/` files never run in the browser; they're a Node-only CPU twin used to
+validate the shader math.
 
 ## Credits & references
 

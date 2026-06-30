@@ -5,9 +5,8 @@ import { readFileSync } from "node:fs";
 import { WgslExec, WgslParser } from "wgsl_reflect/wgsl_reflect.module.js";
 import { rhs as jsRhs, rk4Step, makePhoton as jsPhoton, metricInverse as jsMetric, METRIC } from "./engine.mjs";
 
-// 1. Pull the real engine source out of index.html (struct Dual .. before shading).
-const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const wgslAll = html.match(/const WGSL = \/\* wgsl \*\/`([\s\S]*?)`;/)[1];
+// 1. Pull the real engine source out of the shipped shader (struct Dual .. before shading).
+const wgslAll = readFileSync(new URL("../src/shaders/scene.wgsl", import.meta.url), "utf8");
 const start = wgslAll.indexOf("struct Dual");
 const end = wgslAll.indexOf("// ---- shading");
 const engine = wgslAll.slice(start, end);

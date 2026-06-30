@@ -1,15 +1,12 @@
-// Smoke-test: extract BOTH WGSL modules from index.html and parse them. Catches syntax /
-// structural errors (not full type-checking — the browser does the rest).
+// Smoke-test: parse both WGSL shader files. Catches syntax / structural errors
+// (not full type-checking — the browser's WebGPU driver does the rest).
 import { readFileSync } from "node:fs";
 import { WgslReflect } from "wgsl_reflect/wgsl_reflect.module.js";
 
-const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-
-function parse(label, re) {
-  const m = html.match(re);
-  if (!m) { console.error(`Could not find ${label} block`); process.exit(1); }
+function parse(label, path) {
+  const code = readFileSync(new URL(path, import.meta.url), "utf8");
   try {
-    const r = new WgslReflect(m[1]);
+    const r = new WgslReflect(code);
     console.log(`${label} parsed OK — ${r.functions.length} fns, entry points: ` +
       [...r.entry.vertex, ...r.entry.fragment].map((e) => e.name).join(", "));
   } catch (e) {
@@ -18,5 +15,5 @@ function parse(label, re) {
   }
 }
 
-parse("WGSL (scene)", /const WGSL = \/\* wgsl \*\/`([\s\S]*?)`;/);
-parse("POST_WGSL (bloom)", /const POST_WGSL = \/\* wgsl \*\/`([\s\S]*?)`;/);
+parse("scene.wgsl", "../src/shaders/scene.wgsl");
+parse("post.wgsl", "../src/shaders/post.wgsl");
