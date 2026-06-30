@@ -71,7 +71,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     primitive: { topology: "triangle-list" },
   });
 
-  const UBO_FLOATS = 36; // 9 * vec4
+  const UBO_FLOATS = 40; // 10 * vec4
   const ubuf = device.createBuffer({ size: UBO_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const blurHBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const blurVBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -138,6 +138,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     metric: $("metric"), mass: $("mass"), spin: $("spin"), disk: $("disk"),
     wr: $("wr"), wa: $("wa"), ww: $("ww"),
     rin: $("rin"), rout: $("rout"), dthick: $("dthick"), dbright: $("dbright"), doppler: $("doppler"),
+    dnoise: $("dnoise"), dswirl: $("dswirl"),
     anim: $("anim"), bg: $("bg"), steps: $("steps"), ss: $("ss"), res: $("res"), exp: $("exp"),
     bloom: $("bloom"), bloomamt: $("bloomamt"),
   };
@@ -165,6 +166,8 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     $("routv").textContent = (+ui.rout.value).toFixed(1);
     $("dthickv").textContent = (+ui.dthick.value).toFixed(2);
     $("dbrightv").textContent = (+ui.dbright.value).toFixed(1);
+    $("dnoisev").textContent = (+ui.dnoise.value).toFixed(1);
+    $("dswirlv").textContent = (+ui.dswirl.value).toFixed(1);
     $("stepsv").textContent = ui.steps.value;
     $("ssv").textContent = (+ui.ss.value).toFixed(2);
     $("resv").textContent = (+ui.res.value).toFixed(1) + "x";
@@ -337,6 +340,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     u.set([+ui.bg.value, +ui.exp.value, 0.01, hmax], 24);
     u.set([ui.doppler.checked ? 1 : 0, +ui.dbright.value, (+ui.dthick.value) * M, 0], 28); // dopplerOn, diskBrightness, halfThickness
     u.set([+ui.wr.value, (+ui.wa.value) * 0.5, +ui.ww.value, image2Loaded], 32);            // wormhole: ρ, a, lensing, image2Loaded
+    u.set([+ui.dnoise.value, +ui.dswirl.value, 0, 0], 36);                                  // disk: noiseScale, swirlSpeed
     device.queue.writeBuffer(ubuf, 0, u);
     device.queue.writeBuffer(compBuf, 0, new Float32Array([ui.bloom.checked ? +ui.bloomamt.value : 0, 0, 0, 0]));
 

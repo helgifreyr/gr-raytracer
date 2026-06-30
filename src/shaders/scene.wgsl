@@ -8,6 +8,7 @@ struct U {
   p2       : vec4<f32>,   // bgMode, exposure, hmin, hmax
   p3       : vec4<f32>,   // dopplerOn, diskBrightness, diskHalfThickness, _
   p4       : vec4<f32>,   // wormhole: throatRadius ρ, throatHalfLen a, lensing M, image2Loaded
+  p5       : vec4<f32>,   // disk: noiseScale, swirlSpeed, _, _
 };
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var skyTex : texture_2d<f32>;
@@ -269,6 +270,55 @@ fn otherBackground(dir : vec3<f32>) -> vec3<f32> {
   let c = celestial(dir);
   return c.zyx * vec3<f32>(1.15, 0.95, 0.7);
 }
+// ---- value noise + FBM, for turbulent accretion gas ------------------------
+// Technique adapted from the cuneus black-hole shader (Enes Altun, MIT-licensed,
+// github.com/altunenes/cuneus): multifractal cloud noise sampled in log-spiral
+// coordinates gives the disk filamentary, swirling structure instead of a smooth
+// ramp. This is shading only — the geodesics/metrics/capture are untouched.
+fn vnoise(p : vec3<f32>) -> f32 {
+  let i = floor(p);
+  let f = p - i;
+  let w = f * f * (3.0 - 2.0 * f);                    // smoothstep weights (C¹ continuity)
+  let c000 = hash31(i + vec3<f32>(0.0, 0.0, 0.0));
+  let c100 = hash31(i + vec3<f32>(1.0, 0.0, 0.0));
+  let c010 = hash31(i + vec3<f32>(0.0, 1.0, 0.0));
+  let c110 = hash31(i + vec3<f32>(1.0, 1.0, 0.0));
+  let c001 = hash31(i + vec3<f32>(0.0, 0.0, 1.0));
+  let c101 = hash31(i + vec3<f32>(1.0, 0.0, 1.0));
+  let c011 = hash31(i + vec3<f32>(0.0, 1.0, 1.0));
+  let c111 = hash31(i + vec3<f32>(1.0, 1.0, 1.0));
+  let x00 = mix(c000, c100, w.x);
+  let x10 = mix(c010, c110, w.x);
+  let x01 = mix(c001, c101, w.x);
+  let x11 = mix(c011, c111, w.x);
+  let y0 = mix(x00, x10, w.y);
+  let y1 = mix(x01, x11, w.y);
+  return mix(y0, y1, w.z);
+}
+fn fbm(p : vec3<f32>) -> f32 {
+  var v = 0.0;  var amp = 0.5;  var pp = p;
+  for (var i = 0; i < 4; i = i + 1) {
+    v = v + amp * vnoise(pp);
+    pp = pp * 2.02;
+    amp = amp * 0.5;
+  }
+  return v;
+}
+// Turbulent gas density at a point in the disk plane. Combines a vertical Gaussian
+// slab, a radial window, and multifractal cloud noise twisted into log-spiral arms.
+fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
+  let tnorm = clamp((rc - u.p0.x) / (u.p0.y - u.p0.x), 0.0, 1.0);
+  let radial = smoothstep(0.0, 0.1, tnorm) * smoothstep(1.0, 0.72, tnorm);
+  let vfall = exp(-(pos.z * pos.z) / (H * H));
+  let ang = atan2(pos.y, pos.x);
+  // log-spiral coordinate: a fixed point in (ρ, ang) traces a spiral arm as ρ grows.
+  let spiral = ang + u.p5.y * u.camFwd.w - log(max(rc, 1e-3)) * 2.4;
+  let q = vec3<f32>(rc * 0.9, spiral * 0.22, pos.z * 1.1) * u.p5.x;
+  let cloud = fbm(q);
+  let fine = fbm(q * 3.1 + vec3<f32>(11.5, 3.2, 7.1));
+  let turb = smoothstep(0.30, 1.05, cloud * (0.55 + 0.8 * fine));
+  return vfall * radial * mix(0.25, 1.0, turb);       // base 0.25 keeps the disk continuous
+}
 fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
   let rIn = u.p0.x;  let rOut = u.p0.y;
   let t = clamp((r - rIn) / (rOut - rIn), 0.0, 1.0);   // 0 inner .. 1 outer
@@ -276,16 +326,17 @@ fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
   // (blueshift → hotter/inner colours, redshift → cooler) — staying on the ramp avoids
   // spurious hues. inner = blue-white, mid = amber, outer = deep red.
   let ts = clamp(t - (dop - 1.0) * 0.6, 0.0, 1.0);
-  let cInner = vec3<f32>(0.85, 0.92, 1.0);
-  let cMid   = vec3<f32>(1.0, 0.8, 0.42);
-  let cOuter = vec3<f32>(0.9, 0.27, 0.06);
+  let cInner = vec3<f32>(0.9, 0.95, 1.0);
+  let cMid   = vec3<f32>(1.0, 0.78, 0.4);
+  let cOuter = vec3<f32>(0.9, 0.24, 0.05);
   var col = mix(cInner, cMid, smoothstep(0.0, 0.4, ts));
   col = mix(col, cOuter, smoothstep(0.4, 1.0, ts));
-  let edge = smoothstep(0.0, 0.07, t) * smoothstep(1.0, 0.8, t);
-  let swirl = 0.5 + 0.5 * sin(phi * 3.0 - u.camFwd.w * 1.4); // azimuthal only (no radial bands)
-  let bright = edge * (1.3 - 0.6 * t) * (0.6 + 0.5 * swirl);
-  let beam = pow(dop, 3.0);                           // relativistic beaming (δ³)
-  return col * bright * beam * u.p3.y * u.p2.y;       // * diskBrightness * exposure
+  // Inner-edge incandescence: a hot ring glow peaking at the ISCO, additive.
+  let ring = exp(-pow(t * 7.0, 2.0));
+  col = col + vec3<f32>(1.0, 0.6, 0.32) * ring * 0.7;
+  let bright = 1.4 - 0.5 * t;                          // radial fade handled in diskDensity
+  let beam = pow(dop, 3.0);                            // relativistic beaming (δ³)
+  return col * bright * beam * u.p3.y * u.p2.y;        // * diskBrightness * exposure
 }
 
 // Kerr radial coordinate r(x,y,z): the natural (oblate) radius whose level sets are the
@@ -355,7 +406,7 @@ fn trace(camPos : vec3<f32>, dir : vec3<f32>) -> vec3<f32> {
         let pp = mix(p0, p1, (f32(k) + 0.5) / 8.0);
         let rc = sqrt(pp.x * pp.x + pp.y * pp.y);
         if (rc >= u.p0.x && rc <= u.p0.y && abs(pp.z) < 3.0 * H) {
-          let dens = exp(-(pp.z * pp.z) / (H * H));
+          let dens = diskDensity(pp, rc, H);
           let tang = spinSign * vec3<f32>(-pp.y, pp.x, 0.0) / rc;
           let beta = clamp(sqrt(M / rc), 0.0, 0.95);
           let delta = sqrt(1.0 - beta * beta) / (1.0 - beta * dot(tang, -vray));

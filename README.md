@@ -288,6 +288,9 @@ validate the shader math.
 - **Lensing test pattern** — Cunha, Herdeiro, Radu & Runarsson, *Shadows of Kerr black holes
   with scalar hair* (2015). [arXiv:1509.00021](https://arxiv.org/abs/1509.00021). Inspiration
   for the gridded/coloured celestial-sphere background (multiple lensed images of the sphere).
+- **cuneus** — Enes Altun, [github.com/altunenes/cuneus](https://github.com/altunenes/cuneus)
+  (MIT). The accretion disk's turbulent log-spiral gas (multifractal cloud noise) and the
+  hue-preserving ACES tonemap are adapted from its black-hole shader.
 - Sky panoramas in `images/` — Solar System Scope (CC BY 4.0) and NASA SVS Deep Star Maps
   (public domain); see `images/CREDITS.txt`.
 - Equations in the Physics/Engineering writeups rendered with [KaTeX](https://katex.org) (MIT),
