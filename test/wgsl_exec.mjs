@@ -31,7 +31,7 @@ fn main() {
   var s = makePhoton(vec3<f32>(inp[2],inp[3],inp[4]), vec3<f32>(inp[9],inp[10],inp[11]), metric, M, a);
   outp[8]=s.p.x; outp[9]=s.p.y; outp[10]=s.p.z; outp[11]=s.p.w;
   // and exercise the RK4 integrator loop: 60 fixed steps of h=0.25
-  for (var i = 0; i < 60; i = i + 1) { s = rk4(s, 0.25, metric, M, a); }
+  for (var i = 0; i < 60; i = i + 1) { s = rk4(s, 0.25, metric, M, a, metricInverse(s.q, metric, M, a)); }
   outp[12]=s.q.y; outp[13]=s.q.z; outp[14]=s.q.w;
 }`;
 
@@ -113,6 +113,44 @@ for (const [name, q, a] of kerrPts) {
   const want = [];
   for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) want.push(g[i][j].v);
   compare(`Kerr ${name} — all 16 g^{ab}`, kout, want, tol);
+}
+
+// --- C) Kerr FULL pipeline (makePhotonM + rhsM) via the shipped shader code ----------
+// Closes the gap that section B left open: the off-diagonal g^{0i} sum in the geodesic RHS
+// and the non-diagonal makePhoton null-root are Kerr's actually-novel code, and they ARE the
+// shipped functions (rhsM/makePhotonM, which trace() calls). We feed them a metric built by
+// metricInverse with a LITERAL metric=2 (interpreter-safe), so this executes the real Kerr
+// rhs/photon path — not a re-implementation, and not engine.mjs compared to itself.
+console.log("\nWGSL Kerr full pipeline — makePhotonM + rhsM (CPU-executed) vs validated JS engine");
+const kerrPipe = engine + `
+@group(0) @binding(0) var<storage, read> cin : array<f32>;
+@group(0) @binding(1) var<storage, read_write> cout : array<f32>;
+@compute @workgroup_size(1)
+fn cmain() {
+  let pos = vec3<f32>(cin[0], cin[1], cin[2]);
+  let dir = normalize(vec3<f32>(cin[3], cin[4], cin[5]));
+  let a = cin[6];
+  let m = metricInverse(vec4<f32>(0.0, pos.x, pos.y, pos.z), 2, 1.0, a);  // literal metric=2
+  let s = makePhotonM(pos, dir, m);
+  cout[0]=s.p.x; cout[1]=s.p.y; cout[2]=s.p.z; cout[3]=s.p.w;   // photon 4-momentum (incl. p_t root)
+  let d = rhsM(s, m);
+  cout[4]=d.q.x; cout[5]=d.q.y; cout[6]=d.q.z; cout[7]=d.q.w;
+  cout[8]=d.p.x; cout[9]=d.p.y; cout[10]=d.p.z; cout[11]=d.p.w; // dp/dλ exercises the ∂g^{0i} sum
+}`;
+const cast = new WgslParser().parse(kerrPipe);
+for (const [name, q, a, rawdir] of [
+  ["a=0.7 off-axis", [4, 2, 1.5], 0.7, [1, 0.2, -0.3]],
+  ["a=0.9 grazing", [6, 3, 0.5], 0.9, [-1, 0.15, 0.1]],
+]) {
+  const dir = norm3(rawdir);
+  const cin = new Float32Array([q[0], q[1], q[2], dir[0], dir[1], dir[2], a]);
+  const cout = new Float32Array(12);
+  new WgslExec(cast).dispatchWorkgroups("cmain", [1, 1, 1], { 0: { 0: cin, 1: cout } });
+  const ph = jsPhoton(q, dir, METRIC.KERR, 1.0, a);
+  const p4 = [ph[4], ph[5], ph[6], ph[7]];
+  const w = jsRhs([0, q[0], q[1], q[2], ...p4], METRIC.KERR, 1.0, a);
+  compare(`Kerr ${name} — makePhotonM momentum (p_t root)`, cout.slice(0, 4), p4, tol);
+  compare(`Kerr ${name} — rhsM (off-diagonal dq,dp)`, cout.slice(4, 12), [w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]], tol);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);

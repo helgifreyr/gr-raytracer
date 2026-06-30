@@ -153,7 +153,11 @@ if (metric == 3) {
 }
 ```
 
-Mirror the same function in `test/engine.mjs` and the validation suite covers it too.
+**Preconditions** the engine assumes of any metric you add: `g⁰⁰ = m.c[0] ≠ 0` at the camera
+(`makePhoton` divides by it — it now guards against an exact zero, but a vanishing `g⁰⁰`
+still means no valid null root there), and a non-spherical topology like a wormhole needs its
+own trace path, not just a metric (see `traceWormhole`). Mirror the metric in `test/engine.mjs`
+and the validation suite covers it too.
 
 > Note on the test interpreter: `wgsl_reflect`'s CPU interpreter has a bug evaluating
 > nested dual-number calls and variable-argument metric calls. The Kerr WGSL is therefore
@@ -180,22 +184,30 @@ three layers (`npm test`):
 | Frame dragging: prograde < Schwarzschild < retrograde deflection | `test/test.mjs` | monotone in spin |
 | Capture surfaces: Kerr `r → r₊` at all latitudes (→2M at a=0); Schwarzschild redshift | `test/test.mjs` | r₊ exact eq & off-eq; `2.0` at a=0 |
 | Wormhole thread-vs-reflect dichotomy (b<ρ → other universe, b>ρ → back) | `test/test.mjs` | ℓ→−35 vs +35 |
-| WGSL parses | `test/wgsl_check.mjs` | OK |
-| **The actual shader code, CPU-executed, vs. the validated JS engine** | `test/wgsl_exec.mjs` | Flat/Schwarzschild full pipeline + Kerr metric all match to ~1e-7 |
+| Both WGSL modules parse (scene **and** bloom) | `test/wgsl_check.mjs` | OK |
+| **Shipped shader engine, CPU-executed, vs. the validated JS engine** | `test/wgsl_exec.mjs` | `rhs`/`rk4`/`makePhoton` (Flat/Schwarzschild) + Kerr metric **+ Kerr full pipeline** (`rhsM`/`makePhotonM`) all match to ~1e-7 |
 
 The Hamiltonian-conservation test is the linchpin for Kerr: `H = ½ gᵃᵇ pₐ p_b` stays 0 to
 ~1e-9 along the integration only if the off-diagonal metric *and* its autodiff derivatives
 are mutually consistent — a wrong `∂g` would make it drift.
 
-The last row is the key one: `test/wgsl_exec.mjs` extracts the engine WGSL straight out
-of `index.html` and runs it on the CPU (via `wgsl_reflect`'s interpreter), so the shader
-that ships is the shader that's tested. The JS twin in `test/engine.mjs` is kept
-line-for-line parallel to the WGSL.
-
 ```bash
 npm install   # restores wgsl_reflect (dev-only)
 npm test
 ```
+
+**Exactly what the tests CPU-execute (and what they don't).** `test/wgsl_exec.mjs` extracts
+the WGSL straight out of `index.html` and runs the shipped functions on the CPU (via
+`wgsl_reflect`'s interpreter), comparing to the `test/engine.mjs` twin: this covers the
+**geodesic engine** — `metricInverse` (all metrics), `rhs`/`rhsM`, `rk4`, `makePhoton`/
+`makePhotonM` — *including* the Kerr off-diagonal RHS and non-diagonal null-root (fed a
+literal-metric metric to dodge an interpreter dispatch bug). It does **not** CPU-execute
+`trace()`, the volumetric `disk()`, `traceWormhole()`, the backgrounds, the bloom passes, or
+the WebGPU host JS (uniform packing, bind groups, resize) — those are validated indirectly:
+the geodesic engine they call is tested, the wormhole shares its math with the tested
+`Wormhole` engine in `engine.mjs`, and both WGSL modules are parse-checked. The
+hand-maintained pieces (`trace`/`disk`/`traceWormhole` WGSL, host packing) are transliterations
+kept in sync by review, not by execution.
 
 **Not auto-verified:** real-GPU shader compilation (the WGSL parses and its semantics are
 confirmed on CPU, but driver-specific compilation isn't) and the visual presentation

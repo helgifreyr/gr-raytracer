@@ -216,3 +216,44 @@ export function coordVelocity(w, metric, M, a = 0) {
   const d = rhs(w, metric, M, a);
   return [d[1], d[2], d[3]];
 }
+
+// ----------------------------------------------------------------------------
+// Ellis/Dneg wormhole (ultrastatic; no horizon). Single source of truth for the
+// wormhole, mirroring traceWormhole() in index.html: r(ℓ) shape, the smooth 2nd-order
+// radial equation ℓ̈ = (b²/r³)(dr/dℓ), and the camera b/vr construction. Spherically
+// symmetric ⇒ each ray is planar, integrated as state (ℓ, ℓ̇, φ). Params p = {rho, a, Mw}.
+// ----------------------------------------------------------------------------
+export const Wormhole = {
+  r(l, p) {
+    const al = Math.abs(l);
+    if (al <= p.a) return p.rho;
+    const x = 2 * (al - p.a) / (Math.PI * p.Mw);
+    return p.rho + p.Mw * (x * Math.atan(x) - 0.5 * Math.log(1 + x * x));
+  },
+  drdl(l, p) {
+    const al = Math.abs(l);
+    if (al <= p.a) return 0;
+    return Math.sign(l) * (2 / Math.PI) * Math.atan(2 * (al - p.a) / (Math.PI * p.Mw));
+  },
+  rhs(st, b, p) { const r = this.r(st[0], p); return [st[1], (b * b) / (r * r * r) * this.drdl(st[0], p), b / (r * r)]; },
+  // Trace a camera ray exactly as the shader does (b = rcam·tmag, ℓ̇₀ = dir·rhat).
+  // Returns the final ℓ — sign tells which universe the ray exits (ℓ<0 = the other side).
+  traceFinalL(camPos, dir, p, opt = {}) {
+    const { maxSteps = 40000, stepScale = 0.08, hmin = 0.01, hmax = 2.0 } = opt;
+    const lcam = Math.hypot(...camPos);
+    const rhat = camPos.map((c) => c / lcam);
+    const vr = dir[0] * rhat[0] + dir[1] * rhat[1] + dir[2] * rhat[2];
+    const tmag = Math.hypot(...dir.map((c, i) => c - vr * rhat[i]));
+    const b = this.r(lcam, p) * tmag;
+    let st = [lcam, vr, 0];
+    const lfar = Math.max(lcam * 1.4, 40);
+    for (let i = 0; i < maxSteps; i++) {
+      if (Math.abs(st[0]) > lfar) break;
+      const h = Math.min(Math.max(stepScale * (Math.abs(st[0]) + this.r(st[0], p)), hmin), hmax);
+      const k1 = this.rhs(st, b, p), k2 = this.rhs(st.map((x, j) => x + 0.5 * h * k1[j]), b, p),
+        k3 = this.rhs(st.map((x, j) => x + 0.5 * h * k2[j]), b, p), k4 = this.rhs(st.map((x, j) => x + h * k3[j]), b, p);
+      st = st.map((x, j) => x + (h / 6) * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]));
+    }
+    return st[0];
+  },
+};

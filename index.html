@@ -113,7 +113,7 @@ fn dMul(a : Dual, b : Dual) -> Dual { return Dual(a.v * b.v, a.d * b.v + a.v * b
 fn dDiv(a : Dual, b : Dual) -> Dual { return Dual(a.v / b.v, (a.d * b.v - a.v * b.d) / (b.v * b.v)); }
 fn dMulS(d : Dual, s : f32) -> Dual { return Dual(d.v * s, d.d * s); }
 fn dSDiv(s : f32, b : Dual) -> Dual { return Dual(s / b.v, (-s * b.d) / (b.v * b.v)); }
-fn dSqrt(a : Dual) -> Dual { let r = sqrt(a.v); return Dual(r, a.d / (2.0 * r)); }
+fn dSqrt(a : Dual) -> Dual { let r = sqrt(max(a.v, 1e-30)); return Dual(r, a.d / (2.0 * r)); }  // floor avoids NaN/Inf at the exact origin
 
 // ---- the spacetime: contravariant metric g^{ab} as a 4x4 (row-major) of duals
 struct Metric { c : array<Dual, 16> };
@@ -216,13 +216,17 @@ fn metricInverse(q : vec4<f32>, metric : i32, M : f32, a : f32) -> Metric {
 //   dq^i/dλ = g^{ij} p_j ;  dp_i/dλ = -1/2 (∂_i g^{ab}) p_a p_b
 struct State { q : vec4<f32>, p : vec4<f32> };
 
-fn rhs(s : State, metric : i32, M : f32, a : f32) -> State {
-  var m = metricInverse(s.q, metric, M, a);
+// RHS from a PRE-COMPUTED metric m at s.q. Splitting this out lets the trace loop reuse
+// the metric it already evaluated for the capture test (one eval/step instead of two), and
+// lets the test suite exercise this exact code for Kerr without the CPU interpreter's
+// variable-metric dispatch bug (it feeds m from a literal-metric metricInverse call).
+fn rhsM(s : State, m : Metric) -> State {
+  var mm = m;
   var pv = s.p;
   var dq = vec4<f32>(0.0);
   for (var i = 0; i < 4; i = i + 1) {
     var acc = 0.0;
-    for (var j = 0; j < 4; j = j + 1) { acc = acc + m.c[i * 4 + j].v * pv[j]; }
+    for (var j = 0; j < 4; j = j + 1) { acc = acc + mm.c[i * 4 + j].v * pv[j]; }
     dq[i] = acc;
   }
   var dp = vec4<f32>(0.0);
@@ -230,16 +234,21 @@ fn rhs(s : State, metric : i32, M : f32, a : f32) -> State {
     var acc = 0.0;
     for (var a = 0; a < 4; a = a + 1) {
       for (var b = 0; b < 4; b = b + 1) {
-        acc = acc + m.c[a * 4 + b].d[i] * pv[a] * pv[b];
+        acc = acc + mm.c[a * 4 + b].d[i] * pv[a] * pv[b];
       }
     }
     dp[i] = -0.5 * acc;
   }
   return State(dq, dp);
 }
+fn rhs(s : State, metric : i32, M : f32, a : f32) -> State {
+  return rhsM(s, metricInverse(s.q, metric, M, a));
+}
 
-fn rk4(s : State, h : f32, metric : i32, M : f32, a : f32) -> State {
-  let k1 = rhs(s, metric, M, a);
+// rk4 with the first-stage metric (m0 = metricInverse at s.q) passed in, so the caller that
+// already has it doesn't pay for a second evaluation.
+fn rk4(s : State, h : f32, metric : i32, M : f32, a : f32, m0 : Metric) -> State {
+  let k1 = rhsM(s, m0);
   let s2 = State(s.q + k1.q * (h * 0.5), s.p + k1.p * (h * 0.5));
   let k2 = rhs(s2, metric, M, a);
   let s3 = State(s.q + k2.q * (h * 0.5), s.p + k2.p * (h * 0.5));
@@ -252,22 +261,27 @@ fn rk4(s : State, h : f32, metric : i32, M : f32, a : f32) -> State {
   );
 }
 
-fn makePhoton(pos : vec3<f32>, dir : vec3<f32>, metric : i32, M : f32, a : f32) -> State {
-  // General null initial condition (works for non-diagonal Kerr too): set covariant
-  // spatial momentum p_i = dir_i (≈ coordinate direction at the far, weak-field camera),
-  // then solve A p_t² + 2B p_t + C = 0. Take the "+" (future-directed) root: in ingoing
-  // Kerr-Schild coords it is the branch that actually falls inward — the other gives an
-  // empty shadow. Harmless for diagonal metrics (spatial path is the same either way).
+// Null initial condition from a PRE-COMPUTED metric m at the camera. Set covariant spatial
+// momentum p_i = dir_i (≈ coordinate direction in the far, weak field), then solve
+// A p_t² + 2B p_t + C = 0 and take the "+" (future-directed) root — in ingoing Kerr-Schild
+// it is the branch that falls inward (the other gives an empty shadow). Harmless for diagonal
+// metrics. PRECONDITION: A = g^{00} ≠ 0 at the camera (true for every built-in metric); a new
+// metric whose g^{00} vanishes there must guard this. The select() degrades to a finite value
+// instead of NaN if that ever happens.
+fn makePhotonM(pos : vec3<f32>, dir : vec3<f32>, m : Metric) -> State {
   let q = vec4<f32>(0.0, pos.x, pos.y, pos.z);
-  let m = metricInverse(q, metric, M, a);
   let px = dir.x;  let py = dir.y;  let pz = dir.z;
   let A = m.c[0].v;
   let B = m.c[1].v * px + m.c[2].v * py + m.c[3].v * pz;             // g^{0i} p_i
   let C = m.c[5].v * px * px + m.c[10].v * py * py + m.c[15].v * pz * pz
         + 2.0 * (m.c[6].v * px * py + m.c[7].v * px * pz + m.c[11].v * py * pz);
   let disc = max(B * B - A * C, 0.0);
-  let p0 = (-B + sqrt(disc)) / A;          // future-directed root (falls inward)
+  let Aq = select(A, -1e-6, abs(A) < 1e-9);          // guard g^{00}=0 (see precondition)
+  let p0 = (-B + sqrt(disc)) / Aq;                   // future-directed root (falls inward)
   return State(q, vec4<f32>(p0, px, py, pz));
+}
+fn makePhoton(pos : vec3<f32>, dir : vec3<f32>, metric : i32, M : f32, a : f32) -> State {
+  return makePhotonM(pos, dir, metricInverse(vec4<f32>(0.0, pos.x, pos.y, pos.z), metric, M, a));
 }
 
 // ---- shading ---------------------------------------------------------------
@@ -291,7 +305,7 @@ fn starfield(dir : vec3<f32>) -> vec3<f32> {
   var col = mix(vec3<f32>(0.015, 0.02, 0.05), vec3<f32>(0.02, 0.01, 0.03), dir.y * 0.5 + 0.5);
   let s = starLayer(dir, 180.0, 0.975) + starLayer(dir, 320.0, 0.985) * 0.8
         + starLayer(dir, 90.0, 0.99) * 1.3;
-  return col + vec3<f32>(0.95, 0.97, 1.0) * s;
+  return (col + vec3<f32>(0.95, 0.97, 1.0) * s) * u.p2.y;   // honour exposure, like disk/image
 }
 
 const PI : f32 = 3.14159265359;
@@ -314,7 +328,7 @@ fn celestial(dir : vec3<f32>) -> vec3<f32> {
   let latDeg = theta * 180.0 / PI;
   let lonDeg = (phi + PI) * 180.0 / PI;
   let g = max(gridLine(latDeg, 15.0, 0.6), gridLine(lonDeg, 15.0, 0.6));
-  return mix(base, vec3<f32>(1.0), g * 0.85);
+  return mix(base, vec3<f32>(1.0), g * 0.85) * u.p2.y;   // honour exposure, like disk/image
 }
 // User-loaded sky image, equirectangular (lat/long) mapping. textureSampleLevel (not
 // textureSample) because background() is called from non-uniform control flow, and the
@@ -414,7 +428,7 @@ fn trace(camPos : vec3<f32>, dir : vec3<f32>) -> vec3<f32> {
     }
     let refine = 0.25 + 0.75 * clamp(radial, 0.0, 1.0);
     let h = clamp(stepScale * rho * refine, hmin, hmax);
-    let sN = rk4(s, h, metric, M, a);
+    let sN = rk4(s, h, metric, M, a, gm);              // reuse the metric already evaluated above
     // Volumetric accretion disk: a Gaussian slab about z=0. The disk integral is sub-sampled
     // ALONG the segment (independent of the geodesic step), so a thick / edge-on disk stays
     // smooth without forcing tiny geodesic steps. Emission–absorption transfer dI=(S−I)κ ds,
@@ -426,12 +440,13 @@ fn trace(camPos : vec3<f32>, dir : vec3<f32>) -> vec3<f32> {
       let vray = normalize(p1 - p0);
       let ds = length(p1 - p0) / 8.0;
       let lapse = 1.0 / sqrt(max(redshift, 1e-3));   // gravitational redshift (slowly varying)
+      let spinSign = select(1.0, sign(a), metric == 2 && a != 0.0); // disk co-rotates with Kerr spin
       for (var k = 0; k < 8; k = k + 1) {
         let pp = mix(p0, p1, (f32(k) + 0.5) / 8.0);
         let rc = sqrt(pp.x * pp.x + pp.y * pp.y);
         if (rc >= u.p0.x && rc <= u.p0.y && abs(pp.z) < 3.0 * H) {
           let dens = exp(-(pp.z * pp.z) / (H * H));
-          let tang = vec3<f32>(-pp.y, pp.x, 0.0) / rc;
+          let tang = spinSign * vec3<f32>(-pp.y, pp.x, 0.0) / rc;
           let beta = clamp(sqrt(M / rc), 0.0, 0.95);
           let delta = sqrt(1.0 - beta * beta) / (1.0 - beta * dot(tang, -vray));
           let g = select(1.0, delta, u.p3.x > 0.5) * lapse;
@@ -592,7 +607,13 @@ fn fsComposite(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   try { adapter = await navigator.gpu.requestAdapter(); }
   catch (e) { return fail(String(e)); }
   if (!adapter) return fail("No suitable GPU adapter.");
-  const device = await adapter.requestDevice();
+
+  let device;
+  try { device = await adapter.requestDevice(); }
+  catch (e) { return fail("requestDevice failed: " + String(e)); }
+  let deviceLost = false;
+  device.lost.then((info) => { deviceLost = true; fail("GPU device lost: " + (info && info.message || info && info.reason || "")); });
+  device.addEventListener("uncapturederror", (e) => console.error("WebGPU error:", e.error));
 
   const canvas = document.getElementById("gpu");
   const ctx = canvas.getContext("webgpu");
@@ -676,8 +697,10 @@ fn fsComposite(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
       { binding: 2, resource: texBlurB.createView() }, { binding: 3, resource: { buffer: compBuf } }] });
     // blur offsets in uv (bright-pass threshold on horizontal; vertical just blurs).
     // threshold 0.7 so moderately bright disk/stars bloom, not only the brightest spots.
+    // Both passes step in HALF-RES texels (hw, hh) so the blur is isotropic in screen space —
+    // the H pass samples full-res texHDR but writes the half-res target, so use hw not w.
     const spread = 2.5;
-    device.queue.writeBuffer(blurHBuf, 0, new Float32Array([spread / w, 0, 0.7, 0]));
+    device.queue.writeBuffer(blurHBuf, 0, new Float32Array([spread / hw, 0, 0.7, 0]));
     device.queue.writeBuffer(blurVBuf, 0, new Float32Array([0, spread / hh, -1.0, 0]));
   }
   const u = new Float32Array(UBO_FLOATS);
@@ -800,7 +823,11 @@ fn fsComposite(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   const fpsEl = $("fps");
   let t0 = performance.now(), frames = 0, last = t0, lastDraw = 0, frozenTime = 0, idleShown = false;
   const ANIM_FPS = 30;
+  // Re-anchor the clock when animation is toggled on, so the disk phase continues from where
+  // it was frozen instead of jumping to (now − pageload).
+  ui.anim.addEventListener("change", () => { if (ui.anim.checked) t0 = performance.now() - frozenTime * 1000; });
   function frame(now) {
+    if (deviceLost) return;                  // stop submitting to a dead device
     // Render only when needed: on interaction (dirty), or — if animating — at a
     // capped rate. Otherwise idle, so the GPU isn't redrawing a static image.
     const animate = ui.anim.checked;

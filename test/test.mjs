@@ -9,7 +9,7 @@
 //   4. A photon aimed inside the shadow is captured (falls to the horizon).
 
 import {
-  D, METRIC, metricInverse, rk4Step, makePhoton, coordVelocity, hamiltonian,
+  D, METRIC, metricInverse, rk4Step, makePhoton, coordVelocity, hamiltonian, Wormhole,
 } from "./engine.mjs";
 
 let pass = 0, fail = 0;
@@ -279,26 +279,16 @@ console.log("\n[10] Solid shadow: rays aimed at the hole are captured (guards th
 // ---------------------------------------------------------------------------
 console.log("\n[11] Ellis/Dneg wormhole: rays thread the throat (b<ρ) or reflect (b>ρ)");
 {
-  // Mirrors the WGSL wormhole path: ultrastatic, no horizon. The defining behaviour is the
-  // dichotomy — light with impact parameter below the throat radius passes to the OTHER
-  // universe (ℓ<0); above it, it's lensed back to ours (ℓ>0). Integrated via the smooth
-  // 2nd-order radial equation ℓ̈ = (b²/r³)(dr/dℓ).
-  const rho = 2, a = 0.5, Mw = 0.5;
-  const wr = (l) => { const al = Math.abs(l); if (al <= a) return rho; const x = 2 * (al - a) / (Math.PI * Mw); return rho + Mw * (x * Math.atan(x) - 0.5 * Math.log(1 + x * x)); };
-  const drdl = (l) => { const al = Math.abs(l); if (al <= a) return 0; return Math.sign(l) * (2 / Math.PI) * Math.atan(2 * (al - a) / (Math.PI * Mw)); };
-  const rhsW = (st, b) => { const r = wr(st[0]); return [st[1], (b * b) / (r * r * r) * drdl(st[0]), b / (r * r)]; };
-  const finalL = (b) => {
-    const r0 = wr(30);
-    let st = [30, -Math.sqrt(Math.max(1 - b * b / (r0 * r0), 0)), 0];
-    for (let i = 0; i < 40000; i++) {
-      if (Math.abs(st[0]) > 35) break;
-      const h = 0.05;
-      const k1 = rhsW(st, b), k2 = rhsW(st.map((x, j) => x + 0.5 * h * k1[j]), b),
-        k3 = rhsW(st.map((x, j) => x + 0.5 * h * k2[j]), b), k4 = rhsW(st.map((x, j) => x + h * k3[j]), b);
-      st = st.map((x, j) => x + (h / 6) * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]));
-    }
-    return st[0];
-  };
+  // Uses the SHARED Wormhole engine (engine.mjs) — the same r(ℓ), 2nd-order radial eqn, and
+  // camera b/vr construction the shader's traceWormhole() uses (b = rcam·tmag, ℓ̇₀ = dir·rhat).
+  // Defining behaviour: impact parameter below the throat radius → other universe (ℓ<0);
+  // above it → lensed back to ours (ℓ>0).
+  const p = { rho: 2, a: 0.5, Mw: 0.5 };
+  const cam = [30, 0, 0];                       // camera on +x at ℓ≈30
+  const rcam = Wormhole.r(30, p);
+  // Aim inward (−x) with tangential offset s so that impact parameter b = rcam·s ≈ target.
+  const rayForB = (b) => { const s = Math.min(b / rcam, 0.999); return [-Math.sqrt(1 - s * s), s, 0]; };
+  const finalL = (b) => Wormhole.traceFinalL(cam, rayForB(b), p);
   check(`b=1.0 < ρ=2 threads to the other universe (ℓ→${finalL(1.0).toFixed(0)})`, finalL(1.0) < 0, "");
   check(`b=3.0 > ρ=2 reflects back into ours (ℓ→${finalL(3.0).toFixed(0)})`, finalL(3.0) > 0, "");
   check(`b=0 (radial) threads straight through (ℓ→${finalL(0).toFixed(0)})`, finalL(0) < 0, "");
