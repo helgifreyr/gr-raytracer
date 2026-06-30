@@ -154,6 +154,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
   // interaction; the loop otherwise idles so the GPU isn't pegged on a still frame.
   let dirty = true;
   const invalidate = () => { dirty = true; };
+  let overlayOpen = false;          // when a writeup is shown, pause the sim behind it
   function syncLabels() {
     $("massv").textContent = (+ui.mass.value).toFixed(2);
     $("spinv").textContent = (+ui.spin.value).toFixed(2);
@@ -210,6 +211,25 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     }
   });
 
+  // ---- Physics / Engineering writeups (overlay over the sim) ----------------
+  const overlayEl = $("overlay"), overlayContent = $("overlay-content");
+  const contentCache = {};
+  async function showView(view) {
+    document.querySelectorAll("#nav span[data-view]").forEach((s) => s.classList.toggle("active", s.dataset.view === view));
+    if (view === "sim") { overlayEl.style.display = "none"; overlayOpen = false; invalidate(); return; }
+    if (!contentCache[view]) {
+      contentCache[view] = await fetch(new URL(`./content/${view}.html`, import.meta.url))
+        .then((r) => r.text()).catch(() => "<p>Could not load this section.</p>");
+    }
+    overlayContent.innerHTML = contentCache[view];
+    overlayEl.scrollTop = 0;
+    overlayEl.style.display = "block";
+    overlayOpen = true;
+  }
+  document.querySelectorAll("#nav span[data-view]").forEach((s) => s.addEventListener("click", () => showView(s.dataset.view)));
+  overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl || e.target.id === "overlay-close") showView("sim"); });
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && overlayOpen) showView("sim"); });
+
   // ---- pointer interaction -------------------------------------------------
   let dragging = false, lx = 0, ly = 0;
   canvas.addEventListener("pointerdown", (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
@@ -250,6 +270,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
   ui.anim.addEventListener("change", () => { if (ui.anim.checked) t0 = performance.now() - frozenTime * 1000; });
   function frame(now) {
     if (deviceLost) return;                  // stop submitting to a dead device
+    if (overlayOpen) { requestAnimationFrame(frame); return; }  // paused behind a writeup
     // Render only when needed: on interaction (dirty), or — if animating — at a
     // capped rate. Otherwise idle, so the GPU isn't redrawing a static image.
     const animate = ui.anim.checked;

@@ -1,0 +1,79 @@
+<h1>The Engineering</h1>
+<p class="lead">A general-relativistic ray tracer that runs in real time, in a browser tab, with
+no plugins — one independent light ray integrated per pixel, in parallel, on your GPU.</p>
+
+<h2>It all runs on the GPU</h2>
+<p>The heavy lifting is a <strong>WGSL fragment shader</strong> (<code>src/shaders/scene.wgsl</code>)
+that the GPU executes <strong>once per pixel, thousands of cores at a time</strong>. Each
+invocation builds a photon, integrates its geodesic through curved spacetime over hundreds of
+steps, figures out what it hit, and returns a colour. A 1080p frame is ~2 million independent
+geodesic integrations running simultaneously. The JavaScript host
+(<code>src/main.js</code>, on the CPU) does <em>no</em> per-ray physics — it sets up WebGPU, reads
+the UI, packs the camera and parameters into a uniform buffer, and issues draw calls.</p>
+
+<h2>The trick: autodiff instead of Christoffel symbols</h2>
+<p>The geodesic equation needs the derivatives of the metric. Traditionally you'd hand-derive the
+Christoffel symbols for each spacetime — tedious and error-prone. Instead this uses
+<strong>forward-mode automatic differentiation</strong> with dual numbers: a value carries its
+gradient alongside it (<code>struct Dual { v: f32, d: vec4&lt;f32&gt; }</code>), so evaluating the
+metric <em>once</em> yields both <code>gᵃᵇ</code> and every partial derivative <code>∂gᵃᵇ</code>
+the equations of motion need. This is the idea from
+<a href="https://arxiv.org/abs/2010.02237" target="_blank" rel="noopener">FANTASY (Christian &amp; Chan 2020)</a>,
+recast as a real-time GPU shader.</p>
+<p>Consequence: <strong>the metric is the only spacetime-specific code.</strong> Everything
+downstream — the right-hand side, the RK4 integrator, the camera — is generic. Adding a new black
+hole is one new branch returning <code>gᵃᵇ</code> as dual numbers; nothing else changes.</p>
+
+<h2>Integrator and capture</h2>
+<p>The 8-component state <code>(qᵃ, pₐ)</code> is advanced with classic <strong>RK4</strong>, with
+the step size shrinking in the strong field so the tight windings near the photon orbits are
+resolved. A ray ends in one of three ways: captured (black), it crosses the disk slab (emission),
+or it escapes and samples the lensed background.</p>
+<p>Capture is <strong>metric-derived, never a hard-coded radius</strong>: it's each spacetime's
+actual event horizon. For static slicings the redshift <code>−g⁰⁰ = 1/lapse²</code> blows up at the
+horizon; for the horizon-penetrating Kerr–Schild coordinates the metric is regular there, so we use
+the Kerr radial coordinate <code>r &lt; r₊</code> (exact at every latitude — using the Euclidean
+radius instead leaks rays through the shadow off-equator, a bug we hit and fixed).</p>
+
+<h2>The accretion disk is volumetric</h2>
+<p>The disk is a Gaussian slab integrated as emission + absorption <em>along</em> each ray
+(sub-sampled per segment, independent of the geodesic step), so a thick, edge-on disk stays smooth
+and softly self-occluding rather than being an infinitely thin plane. The relativistic Doppler
+factor and the gravitational lapse are combined into one redshift factor that drives the beaming
+(∝ δ³) and a temperature-ramp colour shift.</p>
+
+<h2>HDR and bloom</h2>
+<p>The scene renders to a floating-point HDR buffer; a second shader
+(<code>src/shaders/post.wgsl</code>) extracts the bright parts, blurs them with a separable
+Gaussian at half resolution, and composites them back before a Reinhard tonemap and gamma. That's
+why the beamed side of the disk glows.</p>
+
+<h2>The f32 ceiling</h2>
+<p>WebGPU shaders are single-precision only (no f64). The physics is correct, but near the horizon
+and photon sphere — where geodesics are stiff — f32 shows its limits: near-extremal Kerr
+(<code>a → 1</code>) leaves faint shimmer at the very edge of the shadow. Horizon-penetrating
+coordinates and strong-field step refinement keep it well-behaved everywhere else.</p>
+
+<h2>How it's validated (without a GPU)</h2>
+<p>You can't run WebGPU headless in CI, so correctness is established on the CPU. There's a
+double-precision <strong>JavaScript twin</strong> of the geodesic engine
+(<code>test/engine.mjs</code>) checked against analytic GR — light deflection (including the
+second-order term), Hamiltonian conservation, frame-dragging asymmetry, horizon capture, the
+wormhole thread/reflect dichotomy. Then the <em>shipped</em> WGSL is extracted and run through a
+CPU interpreter and compared against that twin (<code>test/wgsl_exec.mjs</code>), including the
+Kerr off-diagonal terms. <code>npm test</code> runs 21 physics checks plus 17 shader-vs-engine
+checks. (What's not auto-tested: real-GPU compilation, the host's uniform packing, and the visual
+look — those are confirmed by opening the page.)</p>
+
+<h2>Architecture</h2>
+<pre>index.html              page shell (canvas + control panel + this menu)
+src/main.js             WebGPU host: device, pipelines, textures, render loop, UI
+src/shaders/scene.wgsl  the geodesic engine + shading — runs per pixel on the GPU
+src/shaders/post.wgsl   HDR bloom passes
+test/                   Node-only CPU twin + validation (never runs in the browser)</pre>
+<p>It's a static site — no build step. The shaders load as plain text files at startup, so it
+needs serving over http (GitHub Pages, or a local <code>npm run serve</code>). Rendering is
+<strong>on-demand</strong>: the GPU only draws when the camera or a control changes, then idles, so
+a still frame costs almost nothing.</p>
+
+<p style="margin-top:2em"><a href="https://github.com/helgifreyr/gr-raytracer" target="_blank" rel="noopener">Source on GitHub →</a></p>

@@ -23,13 +23,43 @@
   #err div { max-width: 520px; }
   #err code { color: #6cf; }
   #hint { position: fixed; bottom: 10px; left: 12px; color: #56607a; font-size: 11px; }
-  #fps { position: fixed; top: 12px; right: 14px; color: #56607a; font-size: 11px;
+  #fps { position: fixed; bottom: 10px; right: 14px; color: #56607a; font-size: 11px;
     font-variant-numeric: tabular-nums; }
+  #nav { position: fixed; top: 12px; right: 14px; z-index: 10; font-size: 12px;
+    background: rgba(12,14,20,.82); border: 1px solid #2a3140; border-radius: 8px;
+    padding: 5px 11px; backdrop-filter: blur(8px); user-select: none; }
+  #nav span[data-view] { color: #8593a8; cursor: pointer; }
+  #nav span[data-view]:hover { color: #cde; }
+  #nav span.active { color: #6cf; }
+  #nav .sep { color: #3a4250; margin: 0 6px; }
+  #overlay { position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto;
+    background: rgba(6,8,12,.84); backdrop-filter: blur(6px); }
+  #overlay-close { position: fixed; top: 14px; right: 16px; z-index: 21; width: 30px; height: 30px;
+    background: #1a1f2b; color: #cde; border: 1px solid #2a3140; border-radius: 6px;
+    font-size: 15px; line-height: 1; cursor: pointer; }
+  #overlay-content { max-width: 760px; margin: 52px auto; padding: 0 24px 64px;
+    color: #c7d0dd; line-height: 1.65; }
+  #overlay-content h1 { color: #eaf2ff; font-size: 26px; margin: 0 0 .35em; }
+  #overlay-content h2 { color: #9fd0ff; font-size: 18px; margin: 1.7em 0 .5em;
+    border-bottom: 1px solid #232a36; padding-bottom: .3em; }
+  #overlay-content .lead { color: #9fb0c3; font-size: 15px; }
+  #overlay-content p, #overlay-content li { font-size: 14px; }
+  #overlay-content code { background: #161b24; color: #9fd0ff; padding: 1px 5px;
+    border-radius: 4px; font-size: 12.5px; }
+  #overlay-content pre { background: #0d1118; border: 1px solid #232a36; border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; color: #b8c6da; font-size: 12.5px; line-height: 1.5; }
+  #overlay-content a { color: #6cf; }
+  #overlay-content strong { color: #e6edf6; }
 </style>
 
 <canvas id="gpu"></canvas>
 <div id="fps"></div>
 <div id="hint">drag to orbit · scroll to zoom · renders on demand (GPU idles when still)</div>
+
+<div id="nav">
+  <span data-view="sim" class="active">Simulation</span><span class="sep">·</span><span data-view="physics">Physics</span><span class="sep">·</span><span data-view="engineering">Engineering</span>
+</div>
+<div id="overlay"><button id="overlay-close" aria-label="Close" title="Close (Esc)">✕</button><div id="overlay-content"></div></div>
 
 <div id="panel">
   <h1>Geodesic Ray Tracer</h1>
