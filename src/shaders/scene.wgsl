@@ -321,41 +321,26 @@ fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
   let turb = smoothstep(0.22, 0.95, cloud * (0.6 + 0.95 * fine));
   return vfall * radial * mix(0.05, 1.0, turb);       // low floor → dark gaps between bright filaments
 }
-// Blackbody colour from temperature (Kelvin), Planckian-locus rational approximation
-// (Blender-derived fit). Returns linear RGB normalised to ~unit peak. The blue channel
-// uses the same coefficients on both sides of the 6500 K knee.
-fn blackbody(tempK : f32) -> vec3<f32> {
-  let T = clamp(tempK, 1000.0, 40000.0);
-  var c : vec3<f32>;
-  if (T <= 6500.0) {
-    c = vec3<f32>(
-      1.0,
-      -2902.1955 / (T + 1669.5804) + 1.3302674,
-      -8257.7997 / (T + 2575.2828) + 1.8993754);
-  } else {
-    c = vec3<f32>(
-      1745.0425 / (T - 2666.3474) + 0.5599539,
-      1216.6168 / (T - 2173.1012) + 0.7038120,
-      -8257.7997 / (T + 2575.2828) + 1.8993754);
-  }
-  return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
-}
 fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
   let rIn = u.p0.x;  let rOut = u.p0.y;
   let t = clamp((r - rIn) / (rOut - rIn), 0.0, 1.0);   // 0 inner .. 1 outer
-  // Physical colour: a Shakura–Sunyaev thin-disk temperature profile T ∝ r^(−3/4)
-  // anchored at the inner edge, rendered through a blackbody (Planckian) colour map.
-  // g = dop (Doppler × gravitational redshift) multiplies the *observed* temperature,
-  // so the approaching side blueshifts hotter/bluer and the receding side redshifts
-  // cooler/redder — the colour asymmetry is physical, not a hand-tuned ramp.
-  let Temit = 11000.0 * pow(rIn / max(r, rIn), 0.75);
-  let col0 = blackbody(Temit * dop);
-  // Inner-edge incandescence: a tight, intense white-hot ring at the ISCO, additive — this
-  // is the blazing core seen in real lensed disks once the inner edge is bright enough.
+  // Observed temperature: a Shakura–Sunyaev profile T ∝ r^(−3/4) shifted by the relativistic
+  // factor g = dop (Doppler × gravitational redshift). It *indexes* a stylized hot→cool palette
+  // (white-hot core → orange → cool steel-blue gas) rather than a literal blackbody map —
+  // a real disk's temperature range is almost all pale white, which renders as a flat cream
+  // wash. Doppler still drives it physically: approaching side whitens, receding side reddens.
+  let Tobs = 11000.0 * pow(rIn / max(r, rIn), 0.75) * dop;
+  let h = clamp((Tobs - 2500.0) / 9000.0, 0.0, 1.0);   // 0 cool .. 1 hot
+  let cCool = vec3<f32>(0.32, 0.46, 0.72);             // cool outer gas: steel blue-grey
+  let cWarm = vec3<f32>(1.0, 0.55, 0.20);              // orange
+  let cHot  = vec3<f32>(1.0, 0.93, 0.82);             // white-hot core
+  var col = mix(cCool, cWarm, smoothstep(0.05, 0.55, h));
+  col = mix(col, cHot, smoothstep(0.62, 1.0, h));
+  // Inner-edge incandescence: a tight white-hot ring at the ISCO, additive.
   let ring = exp(-pow(t * 9.0, 2.0));
-  var col = col0 + vec3<f32>(1.0, 0.72, 0.42) * ring * 2.2;
-  // Concentrate luminance strongly toward the inner edge (≈ T⁴-ish falloff), so the disk
-  // has the dim-outer / blazing-inner dynamic range instead of a uniform mid-grey wash.
+  col = col + vec3<f32>(1.0, 0.8, 0.55) * ring * 1.3;
+  // Concentrate luminance strongly toward the inner edge, so the disk has the
+  // dim-outer / blazing-inner dynamic range instead of a uniform mid-grey wash.
   let bright = mix(0.35, 3.2, pow(1.0 - t, 2.4));
   let beam = pow(dop, 3.0);                            // relativistic beaming (δ³)
   return col * bright * beam * u.p3.y * u.p2.y;        // * diskBrightness * exposure

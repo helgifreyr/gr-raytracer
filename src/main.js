@@ -139,7 +139,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     for (let i = 0; i < 6; i++) {
       const [tw, th] = dims[i >> 1];
       const horizontal = (i % 2) === 0;
-      const thr = i === 0 ? 0.7 : -1.0;
+      const thr = i === 0 ? 1.2 : -1.0;   // only genuinely bright gas/core blooms, not the mid disk
       device.queue.writeBuffer(blurBufs[i], 0,
         new Float32Array([horizontal ? spread / tw : 0, horizontal ? 0 : spread / th, thr, 0]));
     }

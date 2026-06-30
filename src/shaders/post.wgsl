@@ -57,9 +57,9 @@ fn fsComposite(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   var col = textureSampleLevel(hdrTex, csamp, uv, 0.0).rgb;
   // Sum the three bloom octaves (each progressively coarser/wider) for a soft,
   // band-free glow. Linear filtering upsamples the coarser levels for free.
-  let glow = textureSampleLevel(bloom0, csamp, uv, 0.0).rgb * 0.55
-           + textureSampleLevel(bloom1, csamp, uv, 0.0).rgb * 0.32
-           + textureSampleLevel(bloom2, csamp, uv, 0.0).rgb * 0.20;
+  let glow = textureSampleLevel(bloom0, csamp, uv, 0.0).rgb * 0.5
+           + textureSampleLevel(bloom1, csamp, uv, 0.0).rgb * 0.24
+           + textureSampleLevel(bloom2, csamp, uv, 0.0).rgb * 0.11;
   col = col + glow * cp.bloom;
   col = tonemapHue(col);                                    // hue-preserving ACES
   col = pow(col, vec3<f32>(1.0 / 2.2));                     // gamma
