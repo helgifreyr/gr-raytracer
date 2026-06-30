@@ -1,22 +1,22 @@
 # Metric-agnostic geodesic ray tracer (WebGPU)
 
+**▶ Live demo: <https://helgifreyr.github.io/gr-raytracer/>** — Chrome/Edge, WebGPU required.
+
 A general-relativistic ray tracer that bends light by integrating **null geodesics**
 through an arbitrary spacetime metric, entirely on the GPU via **WebGPU / WGSL**.
 "Metric-agnostic" means the renderer has *no spacetime-specific code* except a single
 function that returns the metric `gᵃᵇ(x)`. Everything else — the geodesic equations
 and their integration — is derived automatically.
 
-This is a browser port of the autodiff geodesic engine in
-`../raylib_raytrace_blackhole_old` (C), restructured to run as a fragment shader.
-
-![spacetimes: Schwarzschild + Minkowski] <!-- open index.html to view -->
-
 ---
 
 ## Run it
 
-It's a single self-contained file — **open `index.html` in Chrome/Edge (v113+)**.
-WebGPU is required. If your browser blocks WebGPU on `file://`, serve it:
+**Easiest:** open the **[live demo](https://helgifreyr.github.io/gr-raytracer/)** in Chrome or
+Edge (v113+ — WebGPU required).
+
+To run locally it's a single self-contained file — open `index.html` in the same browsers.
+If yours blocks WebGPU on `file://`, serve it:
 
 ```bash
 npm run serve          # python -m http.server 8000  → http://localhost:8000
@@ -59,8 +59,8 @@ otherwise the far universe shows a warm-tinted grid so the two sides read as dis
 **Custom sky:** pick a local image with *Sky image* to wrap it on the celestial sphere
 (equirectangular / 2:1 panoramas look best — e.g. a Milky Way pano or an HDRI). It's mapped
 by ray direction (longitude `atan2`, latitude `acos`), so you watch it lens and smear around
-the shadow. Loading a file auto-switches Background to *Image*. Everything stays local —
-the image never leaves your machine.
+the shadow. Loading a file auto-switches Background to *Image*. The image is read client-side
+in the browser — nothing is uploaded.
 
 **It renders on demand** — the GPU only draws when you change something, then idles
 (the FPS readout shows `idle`). The disk swirl is off by default; tick **Animate disk**
@@ -259,14 +259,4 @@ test/test.mjs       physics validation against analytic GR
 test/wgsl_check.mjs WGSL parse smoke-test
 test/wgsl_exec.mjs  runs the real shader on CPU, compares to engine.mjs
 package.json        `npm test`, `npm run serve`
-```
-
-## Relation to Galacto
-
-[galacto.org](https://galacto.org) is a GPU N-body simulation (brute-force gravity,
-symplectic leapfrog) in Rust→wasm→`wgpu`. This project shares the "all the physics lives
-in a WGSL kernel" approach but solves a different problem: instead of evolving N
-interacting bodies, each GPU thread integrates one independent light ray through curved
-spacetime. The Rust/`wasm-pack` wrapper Galacto uses is an optional packaging layer — the
-WGSL engine here is identical with or without it — so this port stays dependency-free.
 ```
