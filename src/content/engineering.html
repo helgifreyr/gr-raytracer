@@ -14,10 +14,13 @@ the UI, packs the camera and parameters into a uniform buffer, and issues draw c
 <h2>The trick: autodiff instead of Christoffel symbols</h2>
 <p>The geodesic equation needs the derivatives of the metric. Traditionally you'd hand-derive the
 Christoffel symbols for each spacetime — tedious and error-prone. Instead this uses
-<strong>forward-mode automatic differentiation</strong> with dual numbers: a value carries its
-gradient alongside it (<code>struct Dual { v: f32, d: vec4&lt;f32&gt; }</code>), so evaluating the
-metric <em>once</em> yields both <code>gᵃᵇ</code> and every partial derivative <code>∂gᵃᵇ</code>
-the equations of motion need. This is the idea from
+<strong>forward-mode automatic differentiation</strong> with dual numbers. A dual number carries a
+value and its gradient, $v + \mathbf{d}\,\varepsilon$ with $\varepsilon^2 = 0$, and any function
+propagates it exactly: $f(v + \mathbf{d}\,\varepsilon) = f(v) + f'(v)\,\mathbf{d}\,\varepsilon$.
+Seeding each coordinate with a basis-vector gradient and evaluating the metric <em>once</em> yields
+both $g^{\mu\nu}$ and every partial $\partial_\alpha g^{\mu\nu}$ the equations of motion need
+(<code>struct Dual { v: f32, d: vec4&lt;f32&gt; }</code> — the value plus a 4-gradient). This is the
+idea from
 <a href="https://arxiv.org/abs/2010.02237" target="_blank" rel="noopener">FANTASY (Christian &amp; Chan 2020)</a>,
 recast as a real-time GPU shader.</p>
 <p>Consequence: <strong>the metric is the only spacetime-specific code.</strong> Everything
@@ -38,7 +41,9 @@ radius instead leaks rays through the shadow off-equator, a bug we hit and fixed
 <h2>The accretion disk is volumetric</h2>
 <p>The disk is a Gaussian slab integrated as emission + absorption <em>along</em> each ray
 (sub-sampled per segment, independent of the geodesic step), so a thick, edge-on disk stays smooth
-and softly self-occluding rather than being an infinitely thin plane. The relativistic Doppler
+and softly self-occluding rather than being an infinitely thin plane. Each segment advances the
+radiative-transfer equation $\frac{dI}{ds} = \kappa\,(S - I)$ — emission toward a source function
+$S$, attenuation by opacity $\kappa$ — so an optically thick disk emerges at its source colour. The relativistic Doppler
 factor and the gravitational lapse are combined into one redshift factor that drives the beaming
 (∝ δ³) and a temperature-ramp colour shift.</p>
 

@@ -214,6 +214,28 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
   // ---- Physics / Engineering writeups (overlay over the sim) ----------------
   const overlayEl = $("overlay"), overlayContent = $("overlay-content");
   const contentCache = {};
+
+  // KaTeX, lazily loaded from a CDN the first time a writeup is opened, to render $…$ / $$…$$.
+  // (Only the docs overlay uses it; the simulation itself stays dependency-free.)
+  const KB = "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/";
+  let katexReady = null;
+  function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+  function loadKaTeX() {
+    if (katexReady) return katexReady;
+    const css = document.createElement("link"); css.rel = "stylesheet"; css.href = KB + "katex.min.css"; document.head.appendChild(css);
+    katexReady = loadScript(KB + "katex.min.js").then(() => loadScript(KB + "contrib/auto-render.min.js"));
+    return katexReady;
+  }
+  async function typeset(el) {
+    try {
+      await loadKaTeX();
+      window.renderMathInElement(el, {
+        delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }],
+        throwOnError: false,
+      });
+    } catch (e) { /* offline / CDN blocked → equations fall back to readable source text */ }
+  }
+
   async function showView(view) {
     document.querySelectorAll("#nav span[data-view]").forEach((s) => s.classList.toggle("active", s.dataset.view === view));
     if (view === "sim") { overlayEl.style.display = "none"; overlayOpen = false; invalidate(); return; }
@@ -225,6 +247,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     overlayEl.scrollTop = 0;
     overlayEl.style.display = "block";
     overlayOpen = true;
+    typeset(overlayContent);
   }
   document.querySelectorAll("#nav span[data-view]").forEach((s) => s.addEventListener("click", () => showView(s.dataset.view)));
   overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl || e.target.id === "overlay-close") showView("sim"); });

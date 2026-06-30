@@ -1,77 +1,116 @@
 <h1>The Physics</h1>
-<p class="lead">Every pixel you see is the colour at the end of a single ray of light, traced
-backwards from the camera through curved spacetime until it hits the disk, falls into a hole,
-threads a wormhole, or escapes to the sky. Here's what's actually being computed.</p>
+<p class="lead">Every pixel is the colour at the end of one ray of light, traced backwards from
+the camera through curved spacetime. No "gravity force" is applied to the photons — we integrate
+the geodesic equation and let the curvature of spacetime do the bending. Here is that
+calculation, in full.</p>
 
-<h2>Light follows the straightest possible path</h2>
-<p>In general relativity, gravity isn't a force — it's the curvature of spacetime, encoded in
-the <em>metric</em> <code>g<sub>μν</sub>(x)</code>. Light always travels along a <strong>null
-geodesic</strong>: the straightest path available, which in curved spacetime is bent. So to
-render a black hole we don't apply a "gravity force" to photons — we integrate the geodesic
-equation and let the curvature do the bending.</p>
-<p>This renderer works in the Hamiltonian form. A photon has a position <code>q = (t,x,y,z)</code>
-and momentum <code>p</code>, and its path obeys</p>
-<pre>dqⁱ/dλ =  gⁱʲ pⱼ
-dpᵢ/dλ = −½ (∂ᵢ gᵃᵇ) pₐ p_b</pre>
-<p>The only thing that distinguishes one universe from another is the metric <code>gᵃᵇ(x)</code>
-and its derivatives. Supply those, and the same integrator renders any spacetime — that's what
-"metric-agnostic" means.</p>
+<h2>Spacetime, the metric, and null rays</h2>
+<p>Spacetime geometry is encoded in the <strong>metric</strong> $g_{\mu\nu}(x)$, which defines the
+invariant interval between nearby events,</p>
+$$ ds^2 = g_{\mu\nu}\, dx^\mu dx^\nu , $$
+<p>with coordinates $x^\mu = (t, x, y, z)$ and the sign convention $(-,+,+,+)$. Light travels on
+<strong>null geodesics</strong>: curves that extremise path length and satisfy $ds^2 = 0$. Massive
+observers move on timelike curves ($ds^2 \lt 0$); photons sit exactly on the light cone.</p>
 
-<h2>Black holes: the shadow and the photon ring</h2>
-<p>Near a black hole, light that passes too close is swallowed. There's a critical distance —
-the <strong>photon sphere</strong> — where light can orbit. Rays aimed inside the critical
-impact parameter spiral in and are captured; aimed just outside, they whip around one or more
-times and escape. The result is the <strong>shadow</strong>: a dark region surrounded by a bright
-<strong>photon ring</strong>, with progressively thinner, lensed copies of the sky piling up at
-its edge. The disk you see "above" and "below" the hole is the <em>same</em> disk — its far side,
-bent up and over the hole by gravitational lensing (the Interstellar look).</p>
+<h2>The Hamiltonian formulation</h2>
+<p>Rather than the usual geodesic equation with Christoffel symbols, this renderer uses the
+<strong>Hamiltonian</strong> form, which is both cleaner to integrate and the reason the engine is
+metric-agnostic. Treating the photon's position $x^\mu$ and conjugate momentum $p_\mu$ as phase-space
+variables, the super-Hamiltonian is</p>
+$$ H(x, p) = \tfrac{1}{2}\, g^{\mu\nu}(x)\, p_\mu p_\nu , $$
+<p>where $g^{\mu\nu}$ is the <em>inverse</em> (contravariant) metric. The geodesics are the flow of
+Hamilton's equations in an affine parameter $\lambda$:</p>
+$$ \frac{dx^\mu}{d\lambda} = \frac{\partial H}{\partial p_\mu} = g^{\mu\nu} p_\nu , \qquad
+   \frac{dp_\mu}{d\lambda} = -\frac{\partial H}{\partial x^\mu} = -\tfrac{1}{2}\,(\partial_\mu g^{\alpha\beta})\, p_\alpha p_\beta . $$
+<p>Two things make this powerful. First, the only spacetime-specific ingredients are $g^{\mu\nu}$ and
+its first derivatives $\partial_\mu g^{\alpha\beta}$ — <strong>no Christoffel symbols are ever
+formed</strong>. Second, the value of $H$ is conserved along the flow, and for light it is pinned at</p>
+$$ H = \tfrac{1}{2}\, g^{\mu\nu} p_\mu p_\nu = 0 , $$
+<p>which is just $ds^2 = 0$ in momentum form. The renderer uses $H = 0$ to fix each photon's initial
+energy, and its conservation along the path is one of the things the test suite checks
+($|H|/|p|^2 \lt 10^{-8}$ over the whole integration).</p>
+<p>When the metric doesn't depend on $t$ (stationary) or on the azimuth $\phi$ (axisymmetric), the
+corresponding momenta are conserved — the photon's energy $E = -p_t$ and angular momentum
+$L = p_\phi$. Their ratio is the <strong>impact parameter</strong> $b = L/E$, which sets how close a
+ray passes and therefore whether it escapes or is captured.</p>
 
-<h2>Spin: frame dragging (Kerr)</h2>
-<p>A rotating (Kerr) black hole drags spacetime around with it. Light co-rotating with the spin
-is deflected less than light going against it, so the shadow becomes <strong>asymmetric — a
-flattened "D" shape</strong> — and shifts to one side. Crank the spin slider and watch the shadow
-deform: that's frame dragging, a genuinely relativistic effect with no Newtonian analogue.</p>
+<h2>Schwarzschild: the shadow</h2>
+<p>For a non-spinning black hole of mass $M$ (geometric units, $G = c = 1$), there is an unstable
+circular photon orbit — the <strong>photon sphere</strong> at areal radius $r = 3M$ — and a
+critical impact parameter</p>
+$$ b_{\rm c} = 3\sqrt{3}\, M \approx 5.2\, M . $$
+<p>Rays with $b \lt b_{\rm c}$ spiral in and are captured (black); rays with $b \gt b_{\rm c}$ swing
+around and escape. The boundary is the edge of the <strong>shadow</strong>. Far from the hole, a ray
+with impact parameter $b$ is deflected by</p>
+$$ \alpha = \frac{4M}{b} + \frac{15\pi}{4}\left(\frac{M}{b}\right)^{\!2} + \cdots $$
+<p>The leading $4M/b$ is the classic Einstein result; the renderer reproduces this <em>and</em> the
+second-order term (the validation suite checks deflection to better than 0.3%). Light that passes
+just outside $b_{\rm c}$ loops the photon sphere one or more times, producing the <strong>photon
+ring</strong> — exponentially thinner, lensed copies of the sky stacked at the shadow's edge.</p>
+
+<h2>Kerr: spin and frame dragging</h2>
+<p>A rotating black hole with spin $a = J/M$ drags spacetime into rotation around it. The renderer
+uses the horizon-penetrating <strong>Kerr–Schild</strong> form, whose inverse metric has the elegant
+structure</p>
+$$ g^{\mu\nu} = \eta^{\mu\nu} - f\, l^\mu l^\nu , $$
+<p>where $\eta$ is flat space, $l^\mu$ is a null vector field, and $f$ is a scalar built from the
+Kerr radius. The event horizon sits at</p>
+$$ r_\pm = M \pm \sqrt{M^2 - a^2} , $$
+<p>(the outer root $r_+$ is the shadow boundary). Frame dragging makes co-rotating light bend less
+than counter-rotating light, so the shadow becomes <strong>asymmetric — a flattened "D"</strong> —
+and shifts sideways. Crank the spin slider to watch it deform; the prograde/retrograde deflection
+asymmetry it produces is checked in the test suite.</p>
 
 <h2>The accretion disk glows lopsidedly</h2>
-<p>Real black holes are ringed by hot, orbiting gas. Two relativistic effects shape how it looks,
-both folded into a single redshift factor:</p>
+<p>Hot gas orbits in the equatorial plane at relativistic speed. The observed brightness and colour
+are set by the total <strong>redshift factor</strong> $g = E_{\rm obs}/E_{\rm emit}$, which folds
+two effects together:</p>
 <ul>
-  <li><strong>Doppler beaming.</strong> The disk material moves at a large fraction of light
-  speed. The side rotating <em>toward</em> you is beamed brighter (∝ δ³) and shifted bluer; the
-  receding side dims and reddens. That stark left/right asymmetry is the most striking feature of
-  a real black-hole image — and it flips if you reverse the spin.</li>
-  <li><strong>Gravitational redshift.</strong> Light climbing out of the gravitational well loses
-  energy, so the inner edge of the disk is dimmed and reddened relative to the outer edge.</li>
+  <li><strong>Relativistic Doppler beaming.</strong> Material rotating toward you is boosted; the
+  emitted intensity transforms as
+  $I_{\rm obs} = g^{3}\, I_{\rm emit}$, with the special-relativistic part
+  $g_{\rm SR} = \big[\gamma\,(1 - \boldsymbol\beta\!\cdot\!\mathbf n)\big]^{-1}$ for orbital velocity
+  $\boldsymbol\beta$ along the line of sight $\mathbf n$. The approaching side blazes and blueshifts;
+  the receding side dims and reddens.</li>
+  <li><strong>Gravitational redshift.</strong> Climbing out of the well costs energy, contributing a
+  factor of the lapse $\alpha_{\rm lapse} = 1/\sqrt{-g^{00}}$, so the inner disk is dimmer and redder.</li>
 </ul>
-<p>(Viewed face-on the Doppler effect is mostly transverse — a mild, symmetric redshift — so tilt
-to an edge-on view to see the dramatic bright side.)</p>
+<p>The cubic $g^3$ makes the beaming dramatic — the famous lopsided black-hole image. (Face-on, the
+Doppler shift is transverse and nearly symmetric, so tilt edge-on to see it.)</p>
 
-<h2>Horizons</h2>
-<p>The <strong>event horizon</strong> is the surface of no return. A ray crossing it can never
-come back out, so it renders black. For Schwarzschild it sits at the Schwarzschild radius; for
-Kerr it's smaller and depends on spin (<code>r₊ = M + √(M²−a²)</code>). A subtlety: a
-backwards-traced ray only <em>asymptotically</em> approaches the horizon — it takes infinite
-affine parameter to reach — so in practice we terminate on a thin shell just outside it.</p>
+<h2>Horizons and capture</h2>
+<p>The event horizon is the surface of no return; a ray crossing it renders black. A subtlety the
+code respects: a <em>backwards-traced</em> ray reaches the horizon only as $\lambda \to \infty$ — it
+asymptotes rather than arrives — so capture is detected on a thin shell just outside $r_+$, using a
+metric-derived criterion (the redshift $-g^{00}$ diverging, or the Kerr radius dropping below $r_+$),
+never a hard-coded radius.</p>
 
-<h2>The wormhole: a different beast entirely</h2>
-<p>The Thorne/Dneg wormhole (the one built for <em>Interstellar</em>) is
-<strong>ultrastatic — it has no horizon at all</strong>. Nothing gets captured. Instead, light
-either threads the throat into <strong>another universe</strong> or is lensed back into ours,
-decided purely by whether its impact parameter is smaller than the throat radius. Look through it
-and you see a second sky, ringed by the warped edge of the throat. Because the wormhole's topology
-is two sheets joined at a throat — which can't live in a single coordinate chart — it uses its own
-ray-tracing path, exploiting spherical symmetry to integrate a clean 2D problem per ray.</p>
+<h2>The wormhole: no horizon at all</h2>
+<p>The Thorne/Dneg wormhole (built for <em>Interstellar</em>) is <strong>ultrastatic</strong> — its
+metric has $g_{tt} = -1$ everywhere and <em>no horizon</em>:</p>
+$$ ds^2 = -dt^2 + d\ell^2 + r(\ell)^2\,\big(d\theta^2 + \sin^2\!\theta\, d\phi^2\big) . $$
+<p>Here $\ell$ is the proper radial distance running from $-\infty$ (one universe) through the throat
+at $\ell = 0$ to $+\infty$ (the other). The throat shape is</p>
+$$ r(\ell) = \rho + W\!\left[x\arctan x - \tfrac{1}{2}\ln\!\big(1 + x^2\big)\right], \qquad
+   x = \frac{2\,(|\ell| - a)}{\pi W} , $$
+<p>with throat radius $\rho$, half-length $a$, and lensing scale $W$. Spherical symmetry makes every
+ray planar, and the null condition reduces to a single radial equation,</p>
+$$ \left(\frac{d\ell}{d\lambda}\right)^{\!2} = 1 - \frac{b^2}{r(\ell)^2} . $$
+<p>This yields a clean dichotomy: if $b \lt \rho$ the right-hand side never vanishes, the ray threads
+the throat and emerges in the <strong>other universe</strong>; if $b \gt \rho$ it hits a turning point
+and is lensed back into ours. Look through the throat and you see a second sky, ringed by its warped
+rim — which is why the simulation lets you drop a different panorama on each side.</p>
 
-<h2>A note on units and honesty</h2>
-<p>Everything is in geometric units (<code>G = c = 1</code>), with mass <code>M</code> setting the
-scale. The integration is real GR — validated against the analytic light-deflection law (including
-its second-order term), Hamiltonian conservation, and the prograde/retrograde frame-dragging
-asymmetry. What's <em>not</em> physical is the disk's colour palette and brightness (chosen to look
-good) and the bloom; the geometry of the light bending is the real thing.</p>
+<h2>Units &amp; honesty</h2>
+<p>Everything is in geometric units ($G = c = 1$), with $M$ (or $\rho$) setting the scale. The light
+bending is real general relativity, validated against the analytic deflection law (to second order),
+Hamiltonian conservation, frame-dragging asymmetry, horizon capture, and the wormhole dichotomy. What
+is <em>not</em> physical is the disk's colour palette/brightness and the bloom — chosen to look good.
+The geometry of the rays is the genuine article.</p>
 
 <h2>Going deeper</h2>
 <ul>
-  <li>Christian &amp; Chan, <em>FANTASY</em> (2020) — <a href="https://arxiv.org/abs/2010.02237" target="_blank" rel="noopener">arXiv:2010.02237</a>. The autodiff-geodesic method this is built on.</li>
+  <li>Christian &amp; Chan, <em>FANTASY: a symplectic geodesic integrator with automatic differentiation</em> (2020) — <a href="https://arxiv.org/abs/2010.02237" target="_blank" rel="noopener">arXiv:2010.02237</a>. The autodiff-geodesic method this is built on.</li>
   <li>James, von Tunzelmann, Franklin &amp; Thorne, <em>Visualizing Interstellar's Wormhole</em> (2015) — <a href="https://arxiv.org/abs/1502.03809" target="_blank" rel="noopener">arXiv:1502.03809</a>.</li>
   <li>Cunha, Herdeiro, Radu &amp; Runarsson, <em>Shadows of Kerr black holes with scalar hair</em> (2015) — <a href="https://arxiv.org/abs/1509.00021" target="_blank" rel="noopener">arXiv:1509.00021</a>.</li>
 </ul>
