@@ -336,10 +336,10 @@ fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
   // and tangle organically instead of running as clean parallel arcs.
   let warp = vec2<f32>(fbm(q * 0.6), fbm(q * 0.6 + vec3<f32>(5.2, 1.3, 8.9))) - vec2<f32>(0.5);
   let qw = q + vec3<f32>(warp.x, warp.y, 0.0) * 1.3;
-  let envelope = smoothstep(0.22, 0.78, fbm(qw));     // broad gas distribution (carves dark gaps)
-  let wisps = fbmRidged(qw * 2.0);                     // sharp thin filaments inside the gas
-  let turb = envelope * (0.18 + 0.95 * pow(wisps, 1.6));
-  return vfall * radial * clamp(turb, 0.0, 1.2);
+  let envelope = smoothstep(0.25, 0.72, fbm(qw));     // broad gas distribution (carves dark gaps)
+  let wisps = fbmRidged(qw * 3.2);                     // sharp thin filaments inside the gas
+  let turb = envelope * (0.10 + 1.05 * pow(wisps, 2.3));
+  return vfall * radial * clamp(turb, 0.0, 1.3);
 }
 fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
   let rIn = u.p0.x;  let rOut = u.p0.y;
