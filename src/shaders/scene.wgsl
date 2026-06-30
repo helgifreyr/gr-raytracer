@@ -312,12 +312,14 @@ fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
   let vfall = exp(-(pos.z * pos.z) / (H * H));
   let ang = atan2(pos.y, pos.x);
   // log-spiral coordinate: a fixed point in (ρ, ang) traces a spiral arm as ρ grows.
-  let spiral = ang + u.p5.y * u.camFwd.w - log(max(rc, 1e-3)) * 2.4;
-  let q = vec3<f32>(rc * 0.9, spiral * 0.22, pos.z * 1.1) * u.p5.x;
+  // Make the spiral angle the DOMINANT axis so features stretch ALONG the arms (filaments),
+  // not across them (concentric rings); the radial axis only modulates them weakly.
+  let spiral = ang + u.p5.y * u.camFwd.w - log(max(rc, 1e-3)) * 3.2;
+  let q = vec3<f32>(spiral * 0.5, rc * 0.32, pos.z * 1.3) * u.p5.x;
   let cloud = fbm(q);
-  let fine = fbm(q * 3.1 + vec3<f32>(11.5, 3.2, 7.1));
-  let turb = smoothstep(0.30, 1.05, cloud * (0.55 + 0.8 * fine));
-  return vfall * radial * mix(0.25, 1.0, turb);       // base 0.25 keeps the disk continuous
+  let fine = fbm(q * 3.7 + vec3<f32>(11.5, 3.2, 7.1));
+  let turb = smoothstep(0.22, 0.95, cloud * (0.6 + 0.95 * fine));
+  return vfall * radial * mix(0.05, 1.0, turb);       // low floor → dark gaps between bright filaments
 }
 // Blackbody colour from temperature (Kelvin), Planckian-locus rational approximation
 // (Blender-derived fit). Returns linear RGB normalised to ~unit peak. The blue channel
@@ -348,10 +350,13 @@ fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
   // cooler/redder — the colour asymmetry is physical, not a hand-tuned ramp.
   let Temit = 11000.0 * pow(rIn / max(r, rIn), 0.75);
   let col0 = blackbody(Temit * dop);
-  // Inner-edge incandescence: a hot ring glow peaking at the ISCO, additive.
-  let ring = exp(-pow(t * 7.0, 2.0));
-  var col = col0 + vec3<f32>(1.0, 0.6, 0.32) * ring * 0.7;
-  let bright = 1.4 - 0.5 * t;                          // radial fade handled in diskDensity
+  // Inner-edge incandescence: a tight, intense white-hot ring at the ISCO, additive — this
+  // is the blazing core seen in real lensed disks once the inner edge is bright enough.
+  let ring = exp(-pow(t * 9.0, 2.0));
+  var col = col0 + vec3<f32>(1.0, 0.72, 0.42) * ring * 2.2;
+  // Concentrate luminance strongly toward the inner edge (≈ T⁴-ish falloff), so the disk
+  // has the dim-outer / blazing-inner dynamic range instead of a uniform mid-grey wash.
+  let bright = mix(0.35, 3.2, pow(1.0 - t, 2.4));
   let beam = pow(dop, 3.0);                            // relativistic beaming (δ³)
   return col * bright * beam * u.p3.y * u.p2.y;        // * diskBrightness * exposure
 }

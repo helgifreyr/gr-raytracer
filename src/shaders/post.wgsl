@@ -49,7 +49,7 @@ fn tonemapHue(c : vec3<f32>) -> vec3<f32> {
   let peak = max(max(c.r, c.g), max(c.b, 1e-5));
   let ratio = c / peak;                                     // chroma, preserved
   let tp = acesScalar(peak);                                // tonemap the luminance peak
-  let desat = clamp(pow(tp, 4.0) * 0.55, 0.0, 0.55);        // wash hot highlights toward white
+  let desat = clamp(pow(tp, 8.0) * 0.25, 0.0, 0.25);        // only the very hottest cores wash to white
   return mix(ratio, vec3<f32>(1.0), desat) * tp;
 }
 @fragment
