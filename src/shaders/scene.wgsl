@@ -304,6 +304,22 @@ fn fbm(p : vec3<f32>) -> f32 {
   }
   return v;
 }
+// Ridged noise: sharp crests where the value noise crosses ½ (squared to thin them).
+// Summed over octaves this builds the fine, filamentary wisps of turbulent gas — round
+// FBM blobs give smoke, ridges give threads.
+fn ridge(p : vec3<f32>) -> f32 {
+  let n = 1.0 - abs(2.0 * vnoise(p) - 1.0);
+  return n * n;
+}
+fn fbmRidged(p : vec3<f32>) -> f32 {
+  var v = 0.0;  var amp = 0.5;  var pp = p;
+  for (var i = 0; i < 5; i = i + 1) {
+    v = v + amp * ridge(pp);
+    pp = pp * 2.13;
+    amp = amp * 0.5;
+  }
+  return v;                                            // ~0 .. 0.97
+}
 // Turbulent gas density at a point in the disk plane. Combines a vertical Gaussian
 // slab, a radial window, and multifractal cloud noise twisted into log-spiral arms.
 fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
@@ -316,10 +332,14 @@ fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
   // not across them (concentric rings); the radial axis only modulates them weakly.
   let spiral = ang + u.p5.y * u.camFwd.w - log(max(rc, 1e-3)) * 3.2;
   let q = vec3<f32>(spiral * 0.5, rc * 0.32, pos.z * 1.3) * u.p5.x;
-  let cloud = fbm(q);
-  let fine = fbm(q * 3.7 + vec3<f32>(11.5, 3.2, 7.1));
-  let turb = smoothstep(0.22, 0.95, cloud * (0.6 + 0.95 * fine));
-  return vfall * radial * mix(0.05, 1.0, turb);       // low floor → dark gaps between bright filaments
+  // Domain warp: displace the sample point by a low-freq noise field so the streaks swirl
+  // and tangle organically instead of running as clean parallel arcs.
+  let warp = vec2<f32>(fbm(q * 0.6), fbm(q * 0.6 + vec3<f32>(5.2, 1.3, 8.9))) - vec2<f32>(0.5);
+  let qw = q + vec3<f32>(warp.x, warp.y, 0.0) * 1.3;
+  let envelope = smoothstep(0.22, 0.78, fbm(qw));     // broad gas distribution (carves dark gaps)
+  let wisps = fbmRidged(qw * 2.0);                     // sharp thin filaments inside the gas
+  let turb = envelope * (0.18 + 0.95 * pow(wisps, 1.6));
+  return vfall * radial * clamp(turb, 0.0, 1.2);
 }
 fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
   let rIn = u.p0.x;  let rOut = u.p0.y;
