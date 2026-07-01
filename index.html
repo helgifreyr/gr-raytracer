@@ -57,10 +57,10 @@
 <div id="fps"></div>
 <div id="hint">drag to orbit · scroll to zoom · renders on demand (GPU idles when still)</div>
 
-<div id="nav">
-  <span data-view="sim" class="active">Simulation</span><span class="sep">·</span><span data-view="physics">Physics</span><span class="sep">·</span><span data-view="engineering">Engineering</span>
+<div id="nav" role="tablist" aria-label="View">
+  <span data-view="sim" class="active" role="tab" tabindex="0" aria-selected="true">Simulation</span><span class="sep">·</span><span data-view="physics" role="tab" tabindex="0" aria-selected="false">Physics</span><span class="sep">·</span><span data-view="engineering" role="tab" tabindex="0" aria-selected="false">Engineering</span>
 </div>
-<div id="overlay"><button id="overlay-close" aria-label="Close" title="Close (Esc)">✕</button><div id="overlay-content"></div></div>
+<div id="overlay" role="dialog" aria-modal="true" aria-label="Documentation"><button id="overlay-close" aria-label="Close" title="Close (Esc)">✕</button><div id="overlay-content"></div></div>
 
 <div id="panel">
   <h1>Geodesic Ray Tracer</h1>

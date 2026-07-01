@@ -1,3 +1,16 @@
+> **Status (2026-07-01): Batches A + B + C + D applied.**
+> Fixed — MAJ-1 (disk-noise early-out gate), MAJ-3 (`pushErrorScope` around pipeline + target
+> creation → on-page panel), MAJ-4 (shaders fetched inside the IIFE with `r.ok` checks → `file://`
+> failures now reach the error panel), MIN-1 (phase wrapped at 3600 s), MIN-2 (relaxed the hard
+> density gate to 4H), MIN-3 (cached color-attachment views + resolution-slider-only retargeting),
+> MIN-4 (image-load failures surface in `#hint`), MIN-5 (docs overlay: tab roles/`tabindex`, Enter/
+> Space, `role="dialog"`/`aria-modal`, focus in on open + restore on close), MIN-6 (`pointercancel`
+> ends the drag + releases capture), MIN-7 (reduced-motion keeps disk animation off), PHY-1/PHY-2
+> (physics.html now notes the Newtonian-β approximation and that the lapse identity is exact only for
+> a static slicing). **Partially done:** MAJ-2 — device-loss now branches on `reason` and shows a
+> clear reload message; full auto re-acquire/rebuild was deferred (can't be verified without a real
+> GPU, and a mis-wired rebuild would break the normal path silently). Nitpicks left by choice.
+
 # Code Review — Metric-Agnostic GR Ray Tracer (`H:/study/raytracer`)
 
 **Review date:** 2026-07-01 · **Method:** four specialist agents (GR physicist, WGSL specialist,

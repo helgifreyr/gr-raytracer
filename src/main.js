@@ -7,13 +7,14 @@
 //  metric evaluation produce every partial the Hamiltonian needs. The metric
 //  is the ONLY physics-specific code — everything below `metricInverse` is generic.
 // ===========================================================================
-const WGSL = await fetch(new URL('./shaders/scene.wgsl', import.meta.url)).then((r) => r.text());
-
+// (The two shaders are fetched INSIDE the IIFE below — after the WebGPU capability checks — so a
+//  fetch failure, e.g. opening index.html via file://, routes to the on-page error panel instead of
+//  an uncaught module-load rejection that would leave a silent blank screen.)
+//
 // ===========================================================================
 //  Post-processing: HDR bloom. The scene renders to an rgba16float texture; we
 //  bright-pass + separably blur it (half-res), then composite scene+bloom and tonemap.
 // ===========================================================================
-const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).then((r) => r.text());
 
 // ===========================================================================
 //  Host: WebGPU setup, camera, UI, render loop.
@@ -34,7 +35,11 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
   try { device = await adapter.requestDevice(); }
   catch (e) { return fail("requestDevice failed: " + String(e)); }
   let deviceLost = false;
-  device.lost.then((info) => { deviceLost = true; fail("GPU device lost: " + (info && info.message || info && info.reason || "")); });
+  device.lost.then((info) => {
+    if (info && info.reason === "destroyed") return;   // intentional teardown (e.g. device.destroy()), not a failure
+    deviceLost = true;
+    fail("The GPU device was lost (driver reset, sleep/wake, or resource pressure). Reload the page to continue. " + (info && info.message || ""));
+  });
   device.addEventListener("uncapturederror", (e) => console.error("WebGPU error:", e.error));
 
   const canvas = document.getElementById("gpu");
@@ -50,11 +55,22 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     if (e.length) { fail(label + " shader error: " + e.map((x) => x.message).join(" | ")); return null; }
     return m;
   }
+  let WGSL, POST_WGSL;
+  try {
+    const grab = (p) => fetch(new URL(p, import.meta.url)).then((r) => {
+      if (!r.ok) throw new Error(r.status + " " + r.statusText);
+      return r.text();
+    });
+    [WGSL, POST_WGSL] = await Promise.all([grab('./shaders/scene.wgsl'), grab('./shaders/post.wgsl')]);
+  } catch (e) {
+    return fail("Could not load the shaders — serve this over http (don't open the file directly): " + e);
+  }
   const sceneModule = await makeModule(WGSL, "scene");
   const postModule = await makeModule(POST_WGSL, "post");
   if (!sceneModule || !postModule) return;
 
   // Scene → HDR; blur (bright-pass + Gaussian) → HDR; composite (+tonemap) → swapchain.
+  device.pushErrorScope("validation");   // capture any pipeline/bind-group validation error → on-page panel
   const scenePipeline = device.createRenderPipeline({
     layout: "auto", vertex: { module: sceneModule, entryPoint: "vs" },
     fragment: { module: sceneModule, entryPoint: "fs", targets: [{ format: HDR }] },
@@ -102,11 +118,15 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     });
   }
   rebuildSceneBind();
+  {
+    const initErr = await device.popErrorScope();
+    if (initErr) return fail("GPU pipeline/bind-group error: " + initErr.message);
+  }
 
   // Offscreen targets (recreated on resize): full-res HDR scene + a 3-octave bloom
   // pyramid (½, ¼, ⅛ res). Each octave has an A texture (after the horizontal pass)
   // and a B texture (after the vertical pass); blurTex = [A0,B0, A1,B1, A2,B2].
-  let texHDR, blurTex, blurBinds, compBind;
+  let texHDR, blurTex, blurBinds, compBind, hdrView, blurViews;
   function rebuildTargets(w, h) {
     const dims = [
       [Math.max(1, w >> 1), Math.max(1, h >> 1)],
@@ -132,6 +152,10 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
       { binding: 0, resource: postSampler }, { binding: 1, resource: texHDR.createView() },
       { binding: 2, resource: B(0).createView() }, { binding: 3, resource: B(1).createView() },
       { binding: 4, resource: B(2).createView() }, { binding: 5, resource: { buffer: compBuf } }] });
+    // Cache the color-attachment views (stable until the next resize) so frame() doesn't
+    // recreate 7 views every frame; only the swapchain view must be fetched per-frame.
+    hdrView = texHDR.createView();
+    blurViews = blurTex.map((t) => t.createView());
     // Blur offsets in uv, stepped in TARGET-res texels so each octave's blur is isotropic.
     // Only the very first (L0 horizontal) pass applies the bright-pass threshold (0.7);
     // every later pass just blurs (threshold -1) the already-extracted highlights.
@@ -193,7 +217,9 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     $("expv").textContent = (+ui.exp.value).toFixed(1);
     $("bloomamtv").textContent = (+ui.bloomamt.value).toFixed(2);
   }
-  Object.values(ui).forEach((el) => el.addEventListener("input", () => { syncLabels(); updateMetricUI(); resize(); invalidate(); }));
+  Object.values(ui).forEach((el) => el.addEventListener("input", () => { syncLabels(); updateMetricUI(); invalidate(); }));
+  ui.res.addEventListener("input", resize);   // only the resolution slider needs to rebuild render targets
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) ui.anim.checked = false;  // honor reduced-motion (disk animation stays off)
   syncLabels();
   updateMetricUI();
 
@@ -212,6 +238,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
       invalidate();
     } catch (err) {
       console.error("sky image load failed:", err);
+      $("hint").textContent = "Couldn't load that image — try a JPG/PNG panorama.";
     }
   });
 
@@ -230,6 +257,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
       invalidate();
     } catch (err) {
       console.error("second image load failed:", err);
+      $("hint").textContent = "Couldn't load that image — try a JPG/PNG panorama.";
     }
   });
 
@@ -259,9 +287,18 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     } catch (e) { /* offline / CDN blocked → equations fall back to readable source text */ }
   }
 
+  let lastFocus = null;   // the nav tab that opened the overlay, so focus can return to it on close
   async function showView(view) {
-    document.querySelectorAll("#nav span[data-view]").forEach((s) => s.classList.toggle("active", s.dataset.view === view));
-    if (view === "sim") { overlayEl.style.display = "none"; overlayOpen = false; invalidate(); return; }
+    document.querySelectorAll("#nav span[data-view]").forEach((s) => {
+      const active = s.dataset.view === view;
+      s.classList.toggle("active", active);
+      s.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    if (view === "sim") {
+      overlayEl.style.display = "none"; overlayOpen = false; invalidate();
+      if (lastFocus) { lastFocus.focus(); lastFocus = null; }   // restore focus to the invoking tab
+      return;
+    }
     if (!contentCache[view]) {
       contentCache[view] = await fetch(new URL(`./content/${view}.html`, import.meta.url))
         .then((r) => r.text()).catch(() => "<p>Could not load this section.</p>");
@@ -270,16 +307,23 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     overlayEl.scrollTop = 0;
     overlayEl.style.display = "block";
     overlayOpen = true;
+    $("overlay-close").focus();   // move focus into the dialog for keyboard/screen-reader users
     typeset(overlayContent);
   }
-  document.querySelectorAll("#nav span[data-view]").forEach((s) => s.addEventListener("click", () => showView(s.dataset.view)));
+  document.querySelectorAll("#nav span[data-view]").forEach((s) => {
+    const open = () => { lastFocus = s; showView(s.dataset.view); };
+    s.addEventListener("click", open);
+    s.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  });
   overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl || e.target.id === "overlay-close") showView("sim"); });
   addEventListener("keydown", (e) => { if (e.key === "Escape" && overlayOpen) showView("sim"); });
 
   // ---- pointer interaction -------------------------------------------------
   let dragging = false, lx = 0, ly = 0;
   canvas.addEventListener("pointerdown", (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
-  canvas.addEventListener("pointerup", () => { dragging = false; });
+  const endDrag = (e) => { dragging = false; if (e && e.pointerId != null) { try { canvas.releasePointerCapture(e.pointerId); } catch (_) {} } };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);   // OS-interrupted gesture must not leave the orbit stuck
   canvas.addEventListener("pointermove", (e) => {
     if (!dragging) return;
     cam.yaw -= (e.clientX - lx) * 0.006;
@@ -305,7 +349,12 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     }
   }
   addEventListener("resize", () => { resize(); invalidate(); });
-  resize();
+  device.pushErrorScope("validation");
+  resize();                                   // first call builds the HDR + bloom-pyramid targets/bind groups
+  {
+    const tgtErr = await device.popErrorScope();
+    if (tgtErr) return fail("GPU render-target error: " + tgtErr.message);
+  }
 
   // ---- render loop ---------------------------------------------------------
   const fpsEl = $("fps");
@@ -352,7 +401,7 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
     u.set([pos[0], pos[1], pos[2], tanHalf], 0);
     u.set([right[0], right[1], right[2], aspect], 4);
     u.set([up[0], up[1], up[2], M], 8);
-    u.set([fwd[0], fwd[1], fwd[2], time], 12);
+    u.set([fwd[0], fwd[1], fwd[2], time % 3600], 12);   // wrap the phase so the f32 noise coords stay precise over long runs
     const rIn = (+ui.rin.value) * M, rOut = Math.max((+ui.rout.value) * M, rIn + 0.5);
     u.set([rIn, rOut, escapeR, spin], 16);                                  // rIn,rOut,escapeR,spin
     u.set([+ui.steps.value, +ui.ss.value, metric, ui.disk.checked ? 1 : 0], 20);
@@ -369,9 +418,9 @@ const POST_WGSL = await fetch(new URL('./shaders/post.wgsl', import.meta.url)).t
       const p = enc.beginRenderPass(target(descView));
       p.setPipeline(pipe); p.setBindGroup(0, bg); p.draw(3); p.end();
     };
-    draw(texHDR.createView(), scenePipeline, sceneBind);                      // ray-trace → HDR
-    for (let i = 0; i < 6; i++) draw(blurTex[i].createView(), blurPipeline, blurBinds[i]); // 3-octave bloom pyramid
-    draw(ctx.getCurrentTexture().createView(), compositePipeline, compBind);  // composite + ACES tonemap
+    draw(hdrView, scenePipeline, sceneBind);                                  // ray-trace → HDR (cached view)
+    for (let i = 0; i < 6; i++) draw(blurViews[i], blurPipeline, blurBinds[i]); // 3-octave bloom pyramid (cached views)
+    draw(ctx.getCurrentTexture().createView(), compositePipeline, compBind);  // composite + ACES tonemap (swapchain view must be per-frame)
     device.queue.submit([enc.finish()]);
 
     dirty = false;

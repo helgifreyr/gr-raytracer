@@ -326,6 +326,8 @@ fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
   let tnorm = clamp((rc - u.p0.x) / (u.p0.y - u.p0.x), 0.0, 1.0);
   let radial = smoothstep(0.0, 0.1, tnorm) * smoothstep(1.0, 0.72, tnorm);
   let vfall = exp(-(pos.z * pos.z) / (H * H));
+  let base = radial * vfall;
+  if (base < 0.003) { return 0.0; }   // cheap analytic gate: skip the ~17 noise evals on empty/grazing samples
   let ang = atan2(pos.y, pos.x);
   // log-spiral coordinate: a fixed point in (ρ, ang) traces a spiral arm as ρ grows.
   // Make the spiral angle the DOMINANT axis so features stretch ALONG the arms (filaments),
@@ -339,7 +341,7 @@ fn diskDensity(pos : vec3<f32>, rc : f32, H : f32) -> f32 {
   let envelope = smoothstep(0.25, 0.72, fbm(qw));     // broad gas distribution (carves dark gaps)
   let wisps = fbmRidged(qw * 3.2);                     // sharp thin filaments inside the gas
   let turb = envelope * (0.10 + 1.05 * pow(wisps, 2.3));
-  return vfall * radial * clamp(turb, 0.0, 1.3);
+  return base * clamp(turb, 0.0, 1.3);
 }
 fn disk(r : f32, phi : f32, dop : f32) -> vec3<f32> {
   let rIn = u.p0.x;  let rOut = u.p0.y;
@@ -432,7 +434,7 @@ fn trace(camPos : vec3<f32>, dir : vec3<f32>) -> vec3<f32> {
       for (var k = 0; k < 8; k = k + 1) {
         let pp = mix(p0, p1, (f32(k) + 0.5) / 8.0);
         let rc = sqrt(pp.x * pp.x + pp.y * pp.y);
-        if (rc >= u.p0.x && rc <= u.p0.y && abs(pp.z) < 3.0 * H) {
+        if (rc >= u.p0.x && rc <= u.p0.y && abs(pp.z) < 4.0 * H) {   // loose bbox; diskDensity's smooth windows antialias the edges
           let dens = diskDensity(pp, rc, H);
           let tang = spinSign * vec3<f32>(-pp.y, pp.x, 0.0) / rc;
           let beta = clamp(sqrt(M / rc), 0.0, 0.95);
