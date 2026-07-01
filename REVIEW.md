@@ -10,6 +10,13 @@
 > a static slicing). **Partially done:** MAJ-2 — device-loss now branches on `reason` and shows a
 > clear reload message; full auto re-acquire/rebuild was deferred (can't be verified without a real
 > GPU, and a mis-wired rebuild would break the normal path silently). Nitpicks left by choice.
+>
+> **Verified (2026-07-01):** a second four-agent pass re-audited the fixes against the current code.
+> All items confirmed FIXED with no regressions — including the risk spots: cached views are
+> repopulated inside `rebuildTargets` (no dangling view after resize), both `pushErrorScope`/
+> `popErrorScope` pairs are balanced and awaited, the disk early-out return is algebraically identical
+> to the old density, `resize` hoisting is safe, and `lastFocus` can't go stale. MAJ-2 confirmed a
+> sound intentional partial. Tests green; `main.js` syntax-checked.
 
 # Code Review — Metric-Agnostic GR Ray Tracer (`H:/study/raytracer`)
 
